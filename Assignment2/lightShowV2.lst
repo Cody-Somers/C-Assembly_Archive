@@ -1,0 +1,401 @@
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 1
+
+
+
+
+
+       MCS-51 Family Macro Assembler   A S E M - 5 1   V 1.3
+       =====================================================
+
+
+
+	Source File:	lightShowV2.asm
+	Object File:	lightShowV2.hex
+	List File:	lightShowV2.lst
+
+
+
+ Line  I  Addr  Code            Source
+
+    1:				; Title: Light Show
+    2:				; Description: Will produce a square wave with a period of minimum 6.51us to as large as needed.
+    3:				;   From this it will also do some ISR routines that turn on some LEDs
+    4:				; Author: Cody Somers, 11271716
+    5:				; Due Date: Oct 11,2022
+    6:				; Variables:
+    7:				;   Inputs:
+    8:				;   Outputs:
+    9:
+   10:				; Things to do, there is a 42ms instead of 27ms on the very last light in port B
+   11:				; Still need to fix port A, but port B is doing the right thing
+   12:				; With port A its because of the check condition waiting for 00h. So just play around with that.
+   13:
+   14:
+   15:		N      8000	locat  EQU 8000h               ;Location for this program
+   16:		N      8000	ORG    locat
+   17:
+   18:	  8000	A5 E5 E0 A5	DB     0A5h,0E5h,0E0h,0A5h     ;signiture bytes
+   19:	  8004	23 FF 00 00	DB     35,255,0,0              ;id (35=prog)
+   20:	  8008	00 00 00 00	DB     0,0,0,0                 ;prompt code vector
+   21:	  800C	00 00 00 00	DB     0,0,0,0                 ;reserved
+   22:	  8010	00 00 00 00	DB     0,0,0,0                 ;reserved
+   23:	  8014	00 00 00 00	DB     0,0,0,0                 ;reserved
+   24:	  8018	00 00 00 00	DB     0,0,0,0                 ;user defined
+   25:	  801C	FF FF FF FF	DB     255,255,255,255         ;length and checksum (255=unused)
+   26:	  8020	41 73 73 69	DB     "Assignment2V2",0	     ;max 31 characters, plus the zero
+	  8024	67 6E 6D 65
+	  8028	6E 74 32 56
+	  802C	32 00
+   27:
+   28:		N      F800	port_a EQU 0F800h ; To use port A
+   29:		N      F801	port_b EQU 0F801h ; To use port B
+   30:		N      F803	port_abc_pgm EQU 0F803h ; To configure all abc ports
+   31:
+   32:
+   33:		N      200B	timer  EQU 200Bh               ;Location for ISR of Timer 0. 2000 location taken from Paulmon
+   34:		N      200B	ORG    timer
+   35:				; So here we jump back to the main program, below the square wave stuff.
+   36:				; Then we return back to here and continue on.
+   37:	  200B	12 80 73	LCALL timerSubroutine
+   38:
+   39:	  200E	32		RETI
+   40:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 2
+
+
+
+ Line  I  Addr  Code            Source
+
+   41:
+   42:		N      8040	ORG    locat+64                ;executable code begins here
+   43:
+   44:				;-----------Configure Ports----------
+   45:	  8040	90 F8 03	MOV DPTR, #port_abc_pgm
+   46:	  8043	74 80		MOV A, #128
+   47:	  8045	F0		MOVX @DPTR, A
+   48:
+   49:				; This is how to use it
+   50:				; MOV DPTR, #port_a
+   51:				; MOV A, #0FFh
+   52:				; MOVX @DPTR, A
+   53:
+   54:				;----------Initialize the Pins------------
+   55:	  8046	D2 AF		SETB IE.7 ; Enable interrupt
+   56:	  8048	D2 A9		SETB IE.1 ; Timer 0 interrupt enable
+   57:	  804A	75 89 01	MOV TMOD, #01h ; Turns it into a 16 bit timer, with internal control
+   58:	  804D	75 8C 3D	MOV TH0, #03Dh ; Timer high. Set the timer to a 27ms delay
+   59:	  8050	75 8A DC	MOV TL0, #0DCh ; Timer low.
+   60:				;MOVX F800h, #80h
+   61:
+   62:				; Below are set to 1 so that they are ignored in the first time it goes through DJNZ
+   63:	  8053	79 01		MOV R1, #01h ; Loop counter for initial pins
+   64:	  8055	7A 01		MOV R2, #01h ; Loop counter for blinking pins
+   65:	  8057	7C 01		MOV R4, #01h ; Loop counter for port A pins
+   66:	  8059	7E 01		MOV R6, #01h ; Loop counter for division port A
+   67:	  805B	7F 01		MOV R7, #01h ; Loop counter for division port B
+   68:
+   69:	  805D	D2 8C		SETB TCON.4 ; Turn Timer 0 on.
+   70:				; TCON.0 ; could be set to toggle whether its edge or level triggered.
+   71:
+   72:
+   73:				;----------------Old Code---------------
+   74:
+   75:		N      0020	HALF_PERIOD EQU 32 ; User defined constant
+   76:				; Running this value at
+   77:				; 1 would give a period of 6.510us
+   78:				; 32 gives a period of 73.80us, which is 36.90us high and low.
+   79:				; 227 gives a period of 499.0us.
+   80:
+   81:	  805F			ON:
+   82:	  805F	78 20		MOV R0, #HALF_PERIOD    ; Move the constant into the register
+   83:	  8061	D2 90		SETB P1.0               ; Set the pin to high
+   84:	  8063	00		NOP                     ; Delay because of JMP at the end
+   85:	  8064	00		NOP                     ; JMP is two cycles, so this is the second NOP here.
+   86:
+   87:	  8065			DELAY:
+   88:	  8065	D8 FE		DJNZ R0,DELAY           ; Loop and decrement the register, which is acting as a counter
+   89:
+   90:	  8067			OFF:
+   91:	  8067	78 20		MOV R0, #HALF_PERIOD    ; Move the constant back into the register, since R0 equals 0 at this point
+   92:	  8069	C2 90		CLR P1.0                ; Set the bit low
+   93:
+   94:	  806B			DELAY2:
+   95:	  806B	D8 FE		DJNZ R0,DELAY2          ; Loop and decrement the register.
+   96:	  806D	80 F0		SJMP ON                 ; Jump back to the start of the program
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 3
+
+
+
+ Line  I  Addr  Code            Source
+
+   97:
+   98:				;---------------New Code-----------------
+   99:
+  100:	  806F			tempDivisionPortB:
+  101:	  806F	01 E6		AJMP divisionPortB
+  102:	  8071			tempDivisionPortA:
+  103:	  8071	21 08		AJMP divisionPortA
+  104:
+  105:	  8073			timerSubroutine:
+  106:				; Reset the count on the timer. (set a little shorter to allow for delay from running commands)
+  107:	  8073	75 8C 3D	MOV TH0, #03Dh ; Timer high. Set the timer to a 27ms delay
+  108:	  8076	75 8A DC	MOV TL0, #0DCh ; Timer low.
+  109:
+  110:				;----------Control Sequence------------
+  111:				; Initialize the registers to be 0, but only do this when the pins reach all high
+  112:	  8079	D9 23		DJNZ R1, multiplicationPortA
+  113:	  807B	DC 2C		DJNZ R4, multiplicationPortB
+  114:	  807D	DA 44		DJNZ R2, blinking
+  115:	  807F	DF EE		DJNZ R7, tempDivisionPortB
+  116:	  8081	DE EE		DJNZ R6, tempDivisionPortA
+  117:	  8083	74 00		MOV A, #00h
+  118:	  8085	75 F0 02	MOV B, #02h
+  119:	  8088	90 F8 00	MOV DPTR, #port_a
+  120:	  808B	F0		MOVX @DPTR, A
+  121:	  808C	90 F8 01	MOV DPTR, #port_b
+  122:	  808F	F0		MOVX @DPTR, A
+  123:	  8090	79 09		MOV R1, #09h ; This means that it will loop 8 times for port A before it enters this routine again
+  124:	  8092	7C 06		MOV R4, #06h ; This is the 5 other pins in port B
+  125:	  8094	7A 13		MOV R2, #13h ; Set R2 so that it will jump into the blinking routine 18 times
+  126:	  8096	7B 01		MOV R3, #01h ; This is so that the timer runs twice. Once at 27ms, the other at 15ms. Ignored first
+				time
+  127:	  8098	7E 08		MOV R6, #08h ; This means that it will loop 8 times for port A before it enters this routine again
+  128:	  809A	7F 07		MOV R7, #07h ; This is the 5 other pins in port B
+  129:	  809C	21 26		AJMP theend
+  130:
+  131:				;------------Multiplication------------
+  132:	  809E			multiplicationPortA:
+  133:	  809E	75 F0 02	MOV B, #02h ; Reset B value to 2
+  134:	  80A1	A4		MUL AB ; Bit shift left.
+  135:	  80A2	04		INC A ; Increment A
+  136:				; Do the above twice so that two pins turn on at once (Not implemented yet)
+  137:	  80A3	90 F8 00	MOV DPTR, #port_a
+  138:	  80A6	F0		MOVX @DPTR, A
+  139:	  80A7	80 7D		SJMP theend
+  140:
+  141:	  80A9			multiplicationPortB:
+  142:	  80A9	79 01		MOV R1, #01h ; Reset R1 so that it ignores the DJNZ command above
+  143:	  80AB	75 F0 02	MOV B, #02h ; Reset B value to 2
+  144:	  80AE	A4		MUL AB ; Bit shift left
+  145:	  80AF	04		INC A ; Increment A
+  146:
+  147:	  80B0	AD F0		MOV R5, B ; Temporary register to get value of B
+  148:	  80B2	BD 01 08	CJNE R5, #01h, mulNotFirst ; If this is the first value in Port B continue, else jmp
+  149:	  80B5	90 F8 01	MOV DPTR, #port_b
+  150:	  80B8	74 01		MOV A, #01h
+  151:	  80BA	F0		MOVX @DPTR, A
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 4
+
+
+
+ Line  I  Addr  Code            Source
+
+  152:	  80BB	80 69		SJMP theend
+  153:
+  154:	  80BD			mulNotFirst:
+  155:	  80BD	90 F8 01	MOV DPTR, #port_b
+  156:	  80C0	F0		MOVX @DPTR, A
+  157:	  80C1	80 63		SJMP theend
+  158:
+  159:				;------------Blink the Pins-----------
+  160:	  80C3			blinking:
+  161:	  80C3	79 01		MOV R1, #01h ; Reset R1 so that it ignores the DJNZ command above
+  162:	  80C5	7C 01		MOV R4, #01h ; Reset R4 so that it ignores the DJNZ command above
+  163:	  80C7	75 8C 94	MOV TH0, #94h ; Timer high. Set the timer to a 15ms delay
+  164:	  80CA	75 8A 30	MOV TL0, #30h ; Timer low.
+  165:
+  166:	  80CD	DB 57		DJNZ R3, theend
+  167:	  80CF	75 8C 3D	MOV TH0, #03Dh ; Timer high. Set the timer to a 27ms delay
+  168:	  80D2	75 8A DC	MOV TL0, #0DCh ; Timer low.
+  169:	  80D5	7B 02		MOV R3, #02h ; Reset the timer for twice
+  170:	  80D7	90 F8 00	MOV DPTR, #port_a
+  171:	  80DA	E0		MOVX A, @DPTR
+  172:	  80DB	F4		CPL A ; Complement A
+  173:	  80DC	90 F8 00	MOV DPTR, #port_a
+  174:	  80DF	F0		MOVX @DPTR, A
+  175:	  80E0	90 F8 01	MOV DPTR, #port_b
+  176:	  80E3	F0		MOVX @DPTR, A
+  177:	  80E4	80 40		SJMP theend
+  178:
+  179:				;-----------Division------------
+  180:	  80E6			divisionPortB:
+  181:	  80E6	79 01		MOV R1, #01h ; Reset R1 so that it ignores the DJNZ command above
+  182:	  80E8	7C 01		MOV R4, #01h ; Reset R4 so that it ignores the DJNZ command above
+  183:	  80EA	7A 01		MOV R2, #01h ; Reset R2 so that it ignores the DJNZ command above
+  184:
+  185:	  80EC	B4 00 0E	CJNE A, #00h, doDiv
+  186:	  80EF	74 FF		MOV A, #0FFh ; Set it so that its what port A is supposed to be high as
+  187:	  80F1	90 F8 00	MOV DPTR, #port_a
+  188:	  80F4	F0		MOVX @DPTR, A
+  189:	  80F5	74 1F		MOV A, #1Fh ; Set it so that its what port B is supposed to be high as
+  190:	  80F7	90 F8 01	MOV DPTR, #port_b
+  191:	  80FA	F0		MOVX @DPTR, A
+  192:	  80FB	80 29		SJMP theend
+  193:
+  194:	  80FD			doDiv:
+  195:	  80FD	14		DEC A
+  196:	  80FE	75 F0 02	MOV B, #02h ; Reset B value to 2
+  197:	  8101	84		DIV AB ; Bit shift right.
+  198:	  8102	90 F8 01	MOV DPTR, #port_b
+  199:	  8105	F0		MOVX @DPTR, A
+  200:	  8106	80 1E		SJMP theend
+  201:
+  202:	  8108			divisionPortA:
+  203:	  8108	79 01		MOV R1, #01h ; Reset R1 so that it ignores the DJNZ command above
+  204:	  810A	7C 01		MOV R4, #01h ; Reset R4 so that it ignores the DJNZ command above
+  205:	  810C	7A 01		MOV R2, #01h ; Reset R2 so that it ignores the DJNZ command above
+  206:	  810E	7F 01		MOV R7, #01h ; Reset R7 so that it ignores the DJNZ command above
+  207:	  8110	14		DEC A
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 5
+
+
+
+ Line  I  Addr  Code            Source
+
+  208:	  8111	75 F0 02	MOV B, #02h ; Reset B value to 2
+  209:	  8114	84		DIV AB ; Bit shift right.
+  210:
+  211:	  8115	B4 00 08	CJNE A, #00h, divNotFirst ; If this is the first value in Port A continue, else jmp
+  212:	  8118	90 F8 00	MOV DPTR, #port_a
+  213:	  811B	74 7F		MOV A, #7Fh
+  214:	  811D	F0		MOVX @DPTR, A
+  215:	  811E	80 06		SJMP theend
+  216:
+  217:	  8120			divNotFirst:
+  218:	  8120	90 F8 00	MOV DPTR, #port_a
+  219:	  8123	F0		MOVX @DPTR, A
+  220:	  8124	80 00		SJMP theend
+  221:
+  222:	  8126			theend:
+  223:	  8126	22		RET
+  224:
+  225:				END                     ; End of program.
+
+
+
+
+
+                     register banks used:  ---
+
+                     no errors
+
+
+
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 6
+
+
+
+
+
+	       L I S T   O F   S Y M B O L S
+	       =============================
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+??ASEM_51			  NUMBER    8051
+??VERSION			  NUMBER    0130
+AC				  BIT	      D6
+ACC				  DATA	      E0
+B				  DATA	      F0
+BLINKING			  CODE	    80C3	 160
+CY				  BIT	      D7
+DELAY				  CODE	    8065	  87
+DELAY2				  CODE	    806B	  94
+DIVISIONPORTA			  CODE	    8108	 202
+DIVISIONPORTB			  CODE	    80E6	 180
+DIVNOTFIRST			  CODE	    8120	 217
+DODIV				  CODE	    80FD	 194
+DPH				  DATA	      83
+DPL				  DATA	      82
+EA				  BIT	      AF
+ES				  BIT	      AC
+ET0				  BIT	      A9
+ET1				  BIT	      AB
+EX0				  BIT	      A8
+EX1				  BIT	      AA
+EXTI0				  CODE	    0003
+EXTI1				  CODE	    0013
+F0				  BIT	      D5
+HALF_PERIOD			  NUMBER    0020	  75
+IE				  DATA	      A8
+IE0				  BIT	      89
+IE1				  BIT	      8B
+INT0				  BIT	      B2
+INT1				  BIT	      B3
+IP				  DATA	      B8
+IT0				  BIT	      88
+IT1				  BIT	      8A
+LOCAT				  NUMBER    8000	  15
+MULNOTFIRST			  CODE	    80BD	 154
+MULTIPLICATIONPORTA		  CODE	    809E	 132
+MULTIPLICATIONPORTB		  CODE	    80A9	 141
+OFF				  CODE	    8067	  90
+ON				  CODE	    805F	  81
+OV				  BIT	      D2
+P				  BIT	      D0
+P0				  DATA	      80
+P1				  DATA	      90
+P2				  DATA	      A0
+P3				  DATA	      B0
+PCON				  DATA	      87
+PORT_A				  NUMBER    F800	  28
+PORT_ABC_PGM			  NUMBER    F803	  30
+PORT_B				  NUMBER    F801	  29
+PS				  BIT	      BC
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 7
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+PSW				  DATA	      D0
+PT0				  BIT	      B9
+PT1				  BIT	      BB
+PX0				  BIT	      B8
+PX1				  BIT	      BA
+RB8				  BIT	      9A
+RD				  BIT	      B7
+REN				  BIT	      9C
+RESET				  CODE	    0000
+RI				  BIT	      98
+RS0				  BIT	      D3
+RS1				  BIT	      D4
+RXD				  BIT	      B0
+SBUF				  DATA	      99
+SCON				  DATA	      98
+SINT				  CODE	    0023
+SM0				  BIT	      9F
+SM1				  BIT	      9E
+SM2				  BIT	      9D
+SP				  DATA	      81
+T0				  BIT	      B4
+T1				  BIT	      B5
+TB8				  BIT	      9B
+TCON				  DATA	      88
+TEMPDIVISIONPORTA		  CODE	    8071	 102
+TEMPDIVISIONPORTB		  CODE	    806F	 100
+TF0				  BIT	      8D
+TF1				  BIT	      8F
+TH0				  DATA	      8C
+TH1				  DATA	      8D
+THEEND				  CODE	    8126	 222
+TI				  BIT	      99
+TIMER				  NUMBER    200B	  33
+TIMER0				  CODE	    000B
+TIMER1				  CODE	    001B
+TIMERSUBROUTINE			  CODE	    8073	 105
+TL0				  DATA	      8A
+TL1				  DATA	      8B
+TMOD				  DATA	      89
+TR0				  BIT	      8C
+TR1				  BIT	      8E
+TXD				  BIT	      B1
+WR				  BIT	      B6
