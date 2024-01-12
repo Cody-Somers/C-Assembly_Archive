@@ -1,0 +1,913 @@
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 1
+
+
+
+
+
+       MCS-51 Family Macro Assembler   A S E M - 5 1   V 1.3
+       =====================================================
+
+
+
+	Source File:	SerialPortV3.asm
+	Object File:	SerialPortV3.hex
+	List File:	SerialPortV3.lst
+
+
+
+ Line  I  Addr  Code            Source
+
+    1:				; Title: Serial Port
+    2:				; Description: This program will print out any keyboard inputs onto the LCD. The
+    3:				;   screen of the LCD can be cleared and cursor returned to the home position by
+    4:				;   pressing the button connected to the board. In the background the board will be
+    5:				;   outputting a light show with a predefined pattern and timing sequence, as well as
+    6:				;   a square wave of 37us high and low periods on pin P1.0.
+    7:				; Author: Cody Somers, 11271716
+    8:				; Date Created: Nov 19, 2022
+    9:				; Last Edited: Nov 26, 2022
+   10:				; Due Date: Nov 29, 2022
+   11:				; Microcontroller: 8051 with Paulmon
+   12:				; Size: 583 bytes
+   13:				; Variables: Uses all registers R0-R7, DTPR, and A/B.
+   14:				;   Inputs: Takes in keyboard inputs, external reset button.
+   15:				;   Outputs: Prints to the LCD, blinks LEDs in a predefined sequence, outputs a
+   16:				;     square wave on pin P1.0.
+   17:
+   18:				;---------Initialize Board----------
+   19:		N      8000	locat  EQU 8000h                ;Location for this program
+   20:		N      8000	ORG    locat
+   21:
+   22:	  8000	A5 E5 E0 A5	DB     0A5h,0E5h,0E0h,0A5h      ;signature bytes
+   23:	  8004	23 FF 00 00	DB     35,255,0,0               ;id (35=prog)
+   24:	  8008	00 00 00 00	DB     0,0,0,0                  ;prompt code vector
+   25:	  800C	00 00 00 00	DB     0,0,0,0                  ;reserved
+   26:	  8010	00 00 00 00	DB     0,0,0,0                  ;reserved
+   27:	  8014	00 00 00 00	DB     0,0,0,0                  ;reserved
+   28:	  8018	00 00 00 00	DB     0,0,0,0                  ;user defined
+   29:	  801C	FF FF FF FF	DB     255,255,255,255          ;length and checksum (255=unused)
+   30:	  8020	41 73 73 69	DB     "Assignment4V3",0	      ;max 31 characters, plus the zero
+	  8024	67 6E 6D 65
+	  8028	6E 74 34 56
+	  802C	33 00
+   31:
+   32:				;------ISR Locations------
+   33:		N      2003	extern_0  EQU 2003h         ; Location of External 0 ISR
+   34:		N      2003	ORG    extern_0
+   35:	  2003	12 80 CD	LCALL button_press          ; Subroutine call to clear screen
+   36:	  2006	32		RETI
+   37:
+   38:		N      200B	timer  EQU 200Bh            ; Location of Timer 0 ISR
+   39:		N      200B	ORG    timer
+   40:	  200B	12 81 6B	LCALL timerSubroutine       ; Subroutine call to blink the LEDs
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 2
+
+
+
+ Line  I  Addr  Code            Source
+
+   41:	  200E	32		RETI
+   42:
+   43:		N      2023	RI_TI  EQU 2023h            ; Location of Serial ISR
+   44:		N      2023	ORG    RI_TI
+   45:	  2023	12 80 E2	LCALL LCD_Subroutine   ; Subroutine call to type to LCD
+   46:	  2026	32		RETI
+   47:
+   48:		N      8040	ORG    locat+64             ; executable code begins here
+   49:
+   50:				;------Constant Definitions--------
+   51:				; Pins on board
+   52:		N      F800	port_a EQU 0F800h           ; Location of port A
+   53:		N      F801	port_b EQU 0F801h           ; Location of port B
+   54:		N      F803	port_abc_pgm EQU 0F803h     ; Configuration byte for ports A,B,C
+   55:
+   56:				; LCD commands
+   57:		N      FE00	lcd_command_wr EQU 0FE00h   ; Write only
+   58:		N      FE01	lcd_status_rd EQU 0FE01h    ; Read only
+   59:		N      FE02	lcd_data_wr EQU 0FE02h      ; Write only
+   60:		N      FE03	lcd_data_rd EQU 0FE03h      ; Read only
+   61:
+   62:				;-----------Configure Ports----------
+   63:	  8040	90 F8 03	MOV DPTR, #port_abc_pgm     ; Configuration byte for ports A,B,C
+   64:	  8043	74 80		MOV A, #128
+   65:	  8045	F0		MOVX @DPTR, A
+   66:
+   67:				;----------Initialize the Pins------------
+   68:				; This will set up all the interrupts as well as the timing sequence for the two
+   69:				; timers that were used. Timer 0 is set to 16 bit timer with internal control while
+   70:				; Timer 1 is set to 8 bit auto-reload mode.
+   71:	  8046	D2 AF		SETB IE.7                   ; Enable all interrupts
+   72:	  8048	D2 AC		SETB IE.4                   ; Serial Port interrupt enable
+   73:	  804A	D2 A9		SETB IE.1                   ; Timer 0 interrupt enable
+   74:	  804C	D2 A8		SETB IE.0                   ; External Interrupt 0 interrupt enable
+   75:	  804E	D2 BC		SETB IP.4                   ; Sets serial interrupt priority high
+   76:	  8050	D2 B8		SETB IP.0                   ; Sets external interrupt high
+   77:	  8052	C2 B9		CLR IP.1                    ; Sets timer 0 interrupt low
+   78:
+   79:	  8054	75 89 21	MOV TMOD, #21h              ; Timer 0 = 16 bit, Timer 1 = 8 bit auto-reload
+   80:	  8057	75 98 50	MOV SCON, #50h              ; This sets the serial port to Mode 1. Set to 70h for multiprocessor
+   81:	  805A	75 8D FA	MOV TH1, #250               ; Timer1 high. This sets the baud rate. Equation found manual
+   82:	  805D	75 8B 00	MOV TL1, #00h
+   83:	  8060	75 8C 3D	MOV TH0, #03Dh              ; Timer0 high. Set the LED timer to a 27ms delay
+   84:	  8063	75 8A DC	MOV TL0, #0DCh              ; Timer0 low.
+   85:	  8066	53 87 7F	ANL PCON, #7Fh              ; This is just to ensure that the first bit is set to zero. Otherwise ba
+				ud x2
+   86:
+   87:	  8069	C2 99		CLR TI                      ; Clear the serial interrupts
+   88:	  806B	C2 98		CLR RI
+   89:	  806D	C2 B4		CLR T0                      ; This turns it so that the second serial port will work.
+   90:				                            ; Disable this to use green port
+   91:
+   92:				;--------Initialize LCD Screen--------
+   93:				; Description: These steps follow the timing guide.
+   94:				;   We power on, wait for 15ms.
+   95:				;   Set the function in 8bit mode
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 3
+
+
+
+ Line  I  Addr  Code            Source
+
+   96:				;   Wait again for 4.1ms
+   97:				;   Set the function in 8bit mode
+   98:				;   Wait again for 100us
+   99:				;   Set the function in 8bit mode one final time. Then the BF can be checked and
+  100:				;   the rest of the initialization process can happen:
+  101:				;     This involves setting it to 4bit mode, then clearing display etc.
+  102:				; Variables: Uses A and DPTR
+  103:				;   Input: None
+  104:				;   Output: Initialize the board into 4 bit mode
+  105:
+  106:	  806F			initialize_LCD:
+  107:				; Wait for 15ms
+  108:	  806F	31 3A		ACALL init_delay_sequence
+  109:	  8071	31 3A		ACALL init_delay_sequence
+  110:	  8073	31 3A		ACALL init_delay_sequence
+  111:	  8075	31 3A		ACALL init_delay_sequence
+  112:
+  113:				; Function Set Command (8-bit interface)
+  114:	  8077	90 FE 00	MOV DPTR, #lcd_command_wr
+  115:	  807A	74 30		MOV A, #30h                 ; Necessary value that sets DB5,4 to high
+  116:	  807C	F0		MOVX @DPTR, A
+  117:
+  118:				; Wait 4.2ms
+  119:	  807D	31 3A		ACALL init_delay_sequence
+  120:
+  121:				; Function Set Command (8-bit interface)
+  122:	  807F	90 FE 00	MOV DPTR, #lcd_command_wr
+  123:	  8082	74 30		MOV A, #30h                 ; Necessary value that sets DB5,4 to high
+  124:	  8084	F0		MOVX @DPTR, A
+  125:
+  126:				; Wait 4.2ms (Only 100us necessary)
+  127:	  8085	31 3A		ACALL init_delay_sequence
+  128:
+  129:				; Function Set Command (8-bit interface)
+  130:	  8087	90 FE 00	MOV DPTR, #lcd_command_wr
+  131:	  808A	74 30		MOV A, #30h                 ; Necessary value that sets DB5,4 to high
+  132:	  808C	F0		MOVX @DPTR, A
+  133:
+  134:				; Wait 4.2ms (Might not be necessary)
+  135:	  808D	31 3A		ACALL init_delay_sequence
+  136:
+  137:				; Set into 4-bit mode
+  138:	  808F	90 FE 00	MOV DPTR, #lcd_command_wr
+  139:	  8092	74 20		MOV A, #20h                 ; Sets it to 4-bit mode
+  140:	  8094	F0		MOVX @DPTR, A
+  141:
+  142:				;-------Set initial parameters-------
+  143:				; Description: The board is now initialized and the rest of the board is set
+  144:				;   This puts it in 4-bit mode and 2 line display, cursor and blink enabled,
+  145:				;   shift mode to right cursor shift(might not be used) initial address to write
+  146:				;   which is first line of display, then entry mode(might not be used) so that cursor
+  147:				;   moves right.
+  148:				; Variables: Uses A and DPTR
+  149:				;   Input: None
+  150:				;   Output: Completes initialization of LCD
+  151:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 4
+
+
+
+ Line  I  Addr  Code            Source
+
+  152:				; Set the rest of the stuff. Everything from this point on will be required to send or receive data
+				twice.
+  153:	  8095	31 3A		ACALL init_delay_sequence   ; Wait 4.2ms
+  154:	  8097	74 28		MOV A, #28h                 ; Sets it to 4-bit mode and 2 line display
+  155:	  8099	31 17		ACALL lcd_command           ; lcd_command is in 4-bit mode and only works as such
+  156:
+  157:				; Clear the display
+  158:	  809B	31 20		ACALL clear_disp
+  159:
+  160:				; Turn on display, with cursor and blinking cursor enabled
+  161:	  809D	74 0F		MOV A, #0Fh                 ; Set this back to 0Fh. Set to 0Ch to turn off
+  162:	  809F	31 17		ACALL lcd_command
+  163:
+  164:				; Set shift mode to right cursor shift
+  165:	  80A1	74 10		MOV A, #10h                 ; Set to 14 or 10. Seems to have no difference
+  166:	  80A3	31 17		ACALL lcd_command
+  167:
+  168:				; Set display buffer RAM address. This sets the cursor to the beginning of the first line.
+  169:	  80A5	74 80		MOV A, #80h                 ; Set to 80
+  170:	  80A7	31 17		ACALL lcd_command
+  171:
+  172:				; Set entry mode so that cursor moves to the right but display not shifted
+  173:	  80A9	74 06		MOV A, #06h                 ; Set to 06
+  174:	  80AB	31 17		ACALL lcd_command
+  175:
+  176:	  80AD	D2 8C		SETB TCON.4                 ; Turn Timer 0 on.
+  177:
+  178:				;--------Set the Initial Register Values--------
+  179:				;-----For LCD-----
+  180:				; This register counts from 0 to 40 to check the current length of the LCD.
+  181:	  80AF	7D 00		MOV R5, #00h                ; Turn on
+  182:
+  183:				;-----For LightShow-----
+  184:				; Registers are all initialized to 1 so that they are ignored by DJNZ below
+  185:	  80B1	79 01		MOV R1, #01h                ; Loop counter for multiplication port A
+  186:	  80B3	7A 01		MOV R2, #01h                ; Loop counter for multiplication port B
+  187:	  80B5	7C 01		MOV R4, #01h                ; Loop counter for blinking lights
+  188:	  80B7	7E 01		MOV R6, #01h                ; Loop counter for division port A
+  189:	  80B9	7F 01		MOV R7, #01h                ; Loop counter for division port B
+  190:
+  191:	  80BB	D2 8E		SETB TCON.6                 ; Turn Timer 1 on.
+  192:
+  193:				;-----------Start of SquareWave Code---------------
+  194:				; Description: Creates a square wave of a changeable length on P1.0.
+  195:				; Variables: Uses R0
+  196:				;   Input: None
+  197:				;   Output: Squarewave on pin P1.0
+  198:		N      0020	HALF_PERIOD EQU 32      ; User defined constant
+  199:				    ; Running this value at
+  200:				    ; 1 would give a period of 6.510us
+  201:				    ; 32 gives a period of 73.80us, which is 36.90us high and low.
+  202:				    ; 227 gives a period of 499.0us.
+  203:
+  204:	  80BD			ON:
+  205:	  80BD	78 20		  MOV R0, #HALF_PERIOD    ; Move the constant into the register
+  206:	  80BF	D2 90		  SETB P1.0               ; Set the pin to high
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 5
+
+
+
+ Line  I  Addr  Code            Source
+
+  207:	  80C1	00		  NOP                     ; Delay because of JMP at the end
+  208:	  80C2	00		  NOP                     ; JMP is two cycles, so this is the second NOP here.
+  209:
+  210:	  80C3			DELAY:
+  211:	  80C3	D8 FE		  DJNZ R0, DELAY          ; Loop and decrement the register, which is acting as a counter
+  212:
+  213:	  80C5			OFF:
+  214:	  80C5	78 20		  MOV R0, #HALF_PERIOD    ; Move the constant back into the register, since R0 equals 0 at this poin
+				t
+  215:	  80C7	C2 90		  CLR P1.0                ; Set the bit low
+  216:
+  217:	  80C9			DELAY2:
+  218:	  80C9	D8 FE		  DJNZ R0,DELAY2          ; Loop and decrement the register.
+  219:
+  220:	  80CB	80 F0		SJMP ON                   ; Jump back to the start of the program
+  221:				; This is an infinite loop, nothing will run beyond this point in the code.
+  222:				;-------End of SquareWave Code----------
+  223:
+  224:				;-------------ISR Routines-----------
+  225:				; Since there is very limited space in the location of the ISR the main coordination
+  226:				; of the ISRs occurs here.
+  227:
+  228:				;-----Button Press-----
+  229:				; Description: Clears the LCD and returns cursor to home
+  230:				;   When the external button is pressed this interrupt will occur.
+  231:				; Variables: Uses A, DPTR, R5
+  232:				;   Input: Button Press
+  233:				;   Output: Clear screen, cursor moved to home.
+  234:	  80CD			button_press:
+  235:	  80CD	C0 E0		  PUSH ACC
+  236:	  80CF	C0 82		  PUSH DPL
+  237:	  80D1	C0 83		  PUSH DPH
+  238:	  80D3	12 81 2A	  LCALL busy_check
+  239:	  80D6	12 81 20	  LCALL clear_disp          ; Clears the display and returns cursor to home
+  240:	  80D9	7D 00		  MOV R5, #00               ; Reset the current saved position of the cursor
+  241:	  80DB	D0 83		  POP DPH
+  242:	  80DD	D0 82		  POP DPL
+  243:	  80DF	D0 E0		  POP ACC
+  244:	  80E1	22		RET
+  245:
+  246:				;-----LCD Sequence-----
+  247:				; Description: Takes user input and prints it to LCD screen
+  248:				;   When a key is pressed on the keyboard this interrupt will occur.
+  249:				; Variables: Uses A, DPTR, R5
+  250:				;   Input: Key press
+  251:				;   Output: Output on the LCD display
+  252:	  80E2			LCD_Subroutine:
+  253:	  80E2	C0 E0		  PUSH ACC
+  254:	  80E4	C0 82		  PUSH DPL
+  255:	  80E6	C0 83		  PUSH DPH
+  256:	  80E8	11 F1		  ACALL user_input          ; Subroutine call put typed key onto LCD.
+  257:	  80EA	D0 83		  POP DPH
+  258:	  80EC	D0 82		  POP DPL
+  259:	  80EE	D0 E0		  POP ACC
+  260:	  80F0	22		RET
+  261:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 6
+
+
+
+ Line  I  Addr  Code            Source
+
+  262:				;-----Light Show-----
+  263:				; Description: Lights up LEDs in a predefined pattern and timing.
+  264:				;   Interrupt occurs whenever Timer 0 reaches its max value
+  265:				; Variables: Uses A, DPTR, R1,2,3,4,6,7
+  266:				;   Input: None
+  267:				;   Output: Light display
+  268:				; The location of the actual subroutine is below the following subroutines and timers
+  269:				; that were used for the LCD.
+  270:
+  271:				;-----------Subroutines------------
+  272:
+  273:				;-----User Input-----
+  274:				; Description: Takes in the user input and prints it onto the display
+  275:				; Variables: Uses A, DPTR
+  276:				;   Input: Key press
+  277:				;   Output: Change display
+  278:	  80F1			user_input:
+  279:	  80F1	C2 99		  CLR TI                    ; Clear both interrupts so that next value can be read
+  280:	  80F3	C2 98		  CLR RI
+  281:	  80F5	E5 99		  MOV A, SBUF               ; Move serial key press into A
+  282:	  80F7	31 2A		  ACALL busy_check          ; Checks if busy
+  283:	  80F9	90 FE 02	  MOV DPTR, #lcd_data_wr    ; Positions DPTR to write to LCD
+  284:	  80FC	F0		  MOVX @DPTR, A             ; First four bits (high bits 7-4)
+  285:	  80FD	C4		  SWAP A                    ; Swap
+  286:	  80FE	F0		  MOVX @DPTR, A             ; Second four bits (low bits 3-0)
+  287:	  80FF	31 02		  ACALL check_cursor_position ; Check that cursor is still on screen
+  288:	  8101	22		RET
+  289:
+  290:				;-----Cursor Position Check-----
+  291:				; Description: Checks the cursor position and ensures that the cursor remains on
+  292:				;   the screen at all times.
+  293:				; Variables: Uses A, DPTR, R5
+  294:				;   Input: None
+  295:				;   Output: Changes cursor position if off screen
+  296:	  8102			check_cursor_position:
+  297:	  8102	BD 13 06	  CJNE R5, #19, do_not_switch
+  298:	  8105	74 C0		  MOV A, #0C0h              ; Set to second line if R5 (cursor position) is equal to 19
+  299:	  8107	31 17		  ACALL lcd_command
+  300:	  8109	0D		  INC R5
+  301:	  810A	22		RET
+  302:	  810B			  do_not_switch:
+  303:	  810B	BD 27 07	    CJNE R5, #39, do_not_switch2
+  304:	  810E	74 80		    MOV A, #80h             ; Set to first line if R5 (cursor position) is equal to 39
+  305:	  8110	31 17		    ACALL lcd_command
+  306:	  8112	7D 00		    MOV R5, #00             ; Resets the cursor value back to 0.
+  307:	  8114	22		RET
+  308:	  8115			  do_not_switch2:
+  309:	  8115	0D		    INC R5
+  310:	  8116	22		RET
+  311:
+  312:				;-----LCD Command-----
+  313:				; Description: This is the 4 bit action the performs a write to the command
+  314:				;   register. Saves space for repetition.
+  315:				; Variables: Uses A and DPTR
+  316:				;   Input: The value of A needs to be set before calling this subroutine
+  317:				;   Output: Puts the command given in A to the command write
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 7
+
+
+
+ Line  I  Addr  Code            Source
+
+  318:	  8117			lcd_command:
+  319:	  8117	31 2A		  ACALL busy_check          ; Checks if busy
+  320:	  8119	90 FE 00	  MOV DPTR, #lcd_command_wr ; Moves to command_wr
+  321:	  811C	F0		  MOVX @DPTR, A             ; First four bits (high bits 7-4)
+  322:	  811D	C4		  SWAP A                    ; Swap
+  323:	  811E	F0		  MOVX @DPTR, A             ; Second four bits (low bits 3-0)
+  324:	  811F	22		RET
+  325:
+  326:				;-----Clear Display-----
+  327:				; Description: A specific command that sets A to the appropriate value for clearing
+  328:				;   the display.
+  329:				; Variables: Uses A
+  330:				;   Input: None
+  331:				;   Output: Clears the display on the board
+  332:	  8120			clear_disp:
+  333:	  8120	74 01		  MOV A, #01h               ; Command for clear
+  334:	  8122	31 17		  ACALL lcd_command         ; Perform action
+  335:	  8124	22		RET
+  336:
+  337:				;-----Move Cursor Home-----
+  338:				; Description: Returns the position of the screen to its original position
+  339:				; Variables: Uses A
+  340:				;   Input: None
+  341:				;   Output: Returns screen position to home
+  342:				; Move the cursor to the home position
+  343:	  8125			move_cursor_home:
+  344:	  8125	74 02		  MOV A, #02h               ; Move cursor to home position
+  345:	  8127	31 17		  ACALL lcd_command
+  346:	  8129	22		RET
+  347:
+  348:				;-----Busy Check-----
+  349:				; Description: Checks the busy flag and only allows the program to continue if
+  350:				;   the busy flag is not set.
+  351:				; Variables: Uses A
+  352:				;   Input: None
+  353:				;   Output: Time delay
+  354:	  812A			busy_check:
+  355:	  812A	C0 E0		  PUSH ACC                  ; Store value in A
+  356:	  812C	90 FE 01	  MOV DPTR, #lcd_status_rd  ; Move to status register
+  357:	  812F			  busy_wait:
+  358:	  812F	E0		    MOVX A, @DPTR           ; First 4 bits
+  359:	  8130	30 E7 03	    JNB acc.7, busy_go      ; If the data bit is not set, program is clear to return (busy_go)
+  360:	  8133	E0		    MOVX A, @DPTR           ; Second 4 bits. Not read but necessary for completeness
+  361:	  8134	80 F9		    SJMP busy_wait          ; Loop while busy flag is set
+  362:	  8136			  busy_go:
+  363:	  8136	E0		    MOVX A, @DPTR           ; Second 4 bits. Ignored
+  364:	  8137	D0 E0		    POP ACC                 ; Return value in A
+  365:	  8139	22		RET
+  366:
+  367:				;---------Delay Timers---------
+  368:				; Description:The timers all function the same, they just have a different duration.
+  369:				;   For every full decrement of the first register, the second (or third) register
+  370:				;   will only decrement once. Since the DJNZ takes two clock cycles, the total number
+  371:				;   of clock cycles taken by a timer can be found by 2*R0*R1, with each clock
+  372:				;   cycle being roughly 0.5us
+  373:				; Variables: Makes use of R0, R1 and R2
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 8
+
+
+
+ Line  I  Addr  Code            Source
+
+  374:				;   Inputs: None
+  375:				;   Outputs: Time delay
+  376:
+  377:				; A timer used for the initialization phase
+  378:	  813A			init_delay_sequence:
+  379:				  ; Wait for 4.3ms
+  380:	  813A	78 2D		  MOV R0, #45               ; Divided by 2
+  381:	  813C	79 5A		  MOV R1, #90
+  382:	  813E			  init_delay:               ; Set for a 4.3ms delay
+  383:	  813E	D8 FE		    DJNZ R0, init_delay
+  384:	  8140	78 2D		    MOV R0, #45
+  385:	  8142	D9 FA		    DJNZ R1, init_delay
+  386:	  8144	22		RET
+  387:
+  388:				; A timer for the blinking left, right portion
+  389:	  8145			timer_delay:
+  390:				  ; Wait for 137ms
+  391:	  8145	78 79		  MOV R0, #121              ; Divided by 2
+  392:	  8147	79 3A		  MOV R1, #58
+  393:	  8149	7A 12		  MOV R2, #18
+  394:	  814B			  delay_timer:              ; Set for a 137ms delay
+  395:	  814B	D8 FE		    DJNZ R0, delay_timer
+  396:	  814D	78 79		    MOV R0, #121
+  397:	  814F	D9 FA		    DJNZ R1, delay_timer
+  398:	  8151	79 3A		    MOV R1, #58
+  399:	  8153	DA F6		    DJNZ R2, delay_timer
+  400:	  8155	22		RET
+  401:
+  402:				; A timer for holding in the centre
+  403:	  8156			timer_delay2:
+  404:				  ; Wait for 3.4s
+  405:	  8156	78 58		  MOV R0, #88               ; Divided by 2
+  406:	  8158	79 B2		  MOV R1, #178
+  407:	  815A	7A C8		  MOV R2, #200
+  408:	  815C			  delay_timer2:             ; Set for a 3.4s delay
+  409:	  815C	D8 FE		    DJNZ R0, delay_timer2
+  410:	  815E	78 58		    MOV R0, #88
+  411:	  8160	D9 FA		    DJNZ R1, delay_timer2
+  412:	  8162	79 B2		    MOV R1, #178
+  413:	  8164	DA F6		    DJNZ R2, delay_timer2
+  414:	  8166	22		RET
+  415:
+  416:				;-----------Start of Light Show Code-------------
+  417:				; NOTE: Proper headers have not been added for everything. Remained the same as in assignment 2.
+  418:				; Description: Lights up LEDs in a predefined pattern and timing.
+  419:				;   Interrupt occurs whenever Timer 0 reaches its max value
+  420:				; Variables: Uses A, DPTR, R1,2,3,4,6,7
+  421:				;   Input: None
+  422:				;   Output: Light display
+  423:
+  424:				; DJNZ can't jump far enough so I have it jumping up to here before performing
+  425:				; an AJMP down to where it is supposed to go.
+  426:	  8167			tempDivisionPortB:
+  427:	  8167	21 F0		AJMP divisionPortB
+  428:	  8169			tempDivisionPortA:
+  429:	  8169	41 15		AJMP divisionPortA
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 9
+
+
+
+ Line  I  Addr  Code            Source
+
+  430:
+  431:	  816B			timerSubroutine:            ; ISR subroutine code begins below
+  432:	  816B	75 8C 3D	MOV TH0, #03Dh              ; Timer high. Set the timer to a 27ms delay
+  433:	  816E	75 8A DC	MOV TL0, #0DCh              ; Timer low. Timer is set 60 cycles shorter to account for delay from ru
+				nning code
+  434:
+  435:				;----------Control Sequence------------
+  436:				; Description: This is the main chunk of code that dictates where everything is going to go.
+  437:				;   If the program passes through all the DJNZ, the light show will reinitialize
+  438:				;   and start the pattern over again.
+  439:				;   This section sets the initial bytes in ports A,B to all be 0
+  440:				;   This also sets the registers, which act as counters for their respective programs.
+  441:				;   These registers are essentially hard coding the program to run a specific number
+  442:				;   of times before it is allowed to pass through all the DJNZ and reinitialize.
+  443:				; Variables: Uses R1,2,3,4,6,7
+  444:				;   Input: None
+  445:				;   Output: None
+  446:	  8171	D9 1F		DJNZ R1, multiplicationPortA
+  447:	  8173	DC 48		DJNZ R4, multiplicationPortB
+  448:	  8175	DA 57		DJNZ R2, blinking
+  449:	  8177	DF EE		DJNZ R7, tempDivisionPortB
+  450:	  8179	DE EE		DJNZ R6, tempDivisionPortA
+  451:
+  452:	  817B	74 00		MOV A, #00h
+  453:	  817D	90 F8 00	MOV DPTR, #port_a           ; Set port A to 0
+  454:	  8180	F0		MOVX @DPTR, A
+  455:	  8181	90 F8 01	MOV DPTR, #port_b           ; Set port B to 0
+  456:	  8184	F0		MOVX @DPTR, A
+  457:
+  458:	  8185	79 06		MOV R1, #06h                ; This loops through port A until the pins are all set to high
+  459:	  8187	7C 03		MOV R4, #03h                ; This loops for the five other pins in port B. Setting high
+  460:	  8189	7A 13		MOV R2, #13h                ; This enters the blinking routine 18 times to get four blinks
+  461:	  818B	7B 01		MOV R3, #01h                ; This is needed for running the timer twice. 27ms + 15ms = 42ms
+  462:	  818D	7F 04		MOV R7, #04h                ; This loops for the five pins in port B. Setting low
+  463:	  818F	7E 05		MOV R6, #05h                ; This loops through port A until the pins are all set to low
+  464:
+  465:	  8191	22		RET                         ; Exit the program
+  466:
+  467:				;------------Multiplication------------
+  468:				    ; This sets the ports from 0's to 1's, incrementally, starting from PA.0 to
+  469:				    ; PB.4, giving a total of 13 pins.
+  470:				    ; It does this by multiplying the current value by two, which is the same
+  471:				    ; as bit shifting left.
+  472:				    ; The time between each light turning on is 27ms
+  473:
+  474:				;-----Port A-----
+  475:	  8192			multiplicationPortA:        ; Start of multiplication port A sequence
+  476:
+  477:				    ; The centre pin must light up by itself, so if this is the first time that
+  478:				    ; the port A is being incremented, only do a single bit shift once.
+  479:	  8192	B9 05 0A	CJNE R1, #05h, secondMult   ; If first time, continue, else skip this portion of code
+  480:	  8195	75 F0 02	MOV B, #02h                 ; Reset B value to 2
+  481:	  8198	A4		MUL AB                      ; Bit shift left
+  482:	  8199	04		INC A                       ; Increment A
+  483:	  819A	90 F8 00	MOV DPTR, #port_a           ; Set port A
+  484:	  819D	F0		MOVX @DPTR, A
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 10
+
+
+
+ Line  I  Addr  Code            Source
+
+  485:	  819E	22		RET                         ; Exit the program
+  486:
+  487:	  819F			secondMult:
+  488:				    ; If this is not the first time that port A is being incremented, do two bit shifts
+  489:				    ; It's done twice since we want two LEDs to light up at the same time
+  490:	  819F	75 F0 02	MOV B, #02h                 ; Reset B value to 2
+  491:	  81A2	A4		MUL AB                      ; Bit shift left.
+  492:	  81A3	04		INC A                       ; Increment A
+  493:	  81A4	75 F0 02	MOV B, #02h                 ; Reset B value to 2
+  494:	  81A7	A4		MUL AB                      ; Bit shift left.
+  495:	  81A8	04		INC A                       ; Increment A
+  496:	  81A9	90 F8 00	MOV DPTR, #port_a           ; Set port A
+  497:	  81AC	F0		MOVX @DPTR, A
+  498:
+  499:				    ; If A overflows, we know that it set PA.7, and tried to set PB.0, however
+  500:				    ; it couldn't. This sets PB.0 manually and sets accumulator to the appropriate
+  501:				    ; value for it to continue in port B.
+  502:	  81AD	C0 06		PUSH 06h
+  503:	  81AF	AE F0		MOV R6, B                   ; Temporary register to get value of B (overflow)
+  504:	  81B1	BE 01 06	CJNE R6, #01h, tempMultJMP  ; If B has a value then continue, else skip this portion of code
+  505:	  81B4	90 F8 01	MOV DPTR, #port_b           ; Set port B
+  506:	  81B7	74 01		MOV A, #01h
+  507:	  81B9	F0		MOVX @DPTR, A
+  508:
+  509:	  81BA			tempMultJMP:                ; Where the CJNE from above jumps to
+  510:	  81BA	D0 06		POP 06h
+  511:	  81BC	22		RET                         ; Exit the program
+  512:
+  513:				;-----Port B-----
+  514:	  81BD			multiplicationPortB:        ; Start of multiplication port B sequence
+  515:				    ; This sets the remaining four bits in port B to high.
+  516:				    ; This is controlled by R2 only letting it enter this loop twice.
+  517:	  81BD	79 01		MOV R1, #01h                ; Reset R1 so that it ignores the DJNZ control sequence
+  518:	  81BF	75 F0 02	MOV B, #02h                 ; Reset B value to 2
+  519:	  81C2	A4		MUL AB                      ; Bit shift left
+  520:	  81C3	04		INC A                       ; Increment A
+  521:	  81C4	75 F0 02	MOV B, #02h                 ; Reset B value to 2
+  522:	  81C7	A4		MUL AB                      ; Bit shift left
+  523:	  81C8	04		INC A                       ; Increment A
+  524:	  81C9	90 F8 01	MOV DPTR, #port_b           ; Set port B
+  525:	  81CC	F0		MOVX @DPTR, A
+  526:	  81CD	22		RET                         ; Exit the program
+  527:
+  528:				;------------Blink the Pins-----------
+  529:				    ; This will blink all of the pins four times.
+  530:				    ; It will be off for 42ms, and on for 42ms.
+  531:	  81CE			blinking:                   ; Start of blinking sequence
+  532:	  81CE	79 01		MOV R1, #01h                ; Reset R1 so that it ignores the DJNZ control sequence
+  533:	  81D0	7C 01		MOV R4, #01h                ; Reset R4 so that it ignores the DJNZ control sequence
+  534:	  81D2	75 8C 94	MOV TH0, #94h               ; Timer high. Set the timer to a 15ms delay
+  535:	  81D5	75 8A 30	MOV TL0, #30h               ; Timer low. (40 cycles less to account for delay)
+  536:
+  537:	  81D8	DB 62		DJNZ R3, theend
+  538:				    ; This either lets the program have a 15ms timer and do nothing, (set above)
+  539:				    ; or it allows the program to pass, complements the bits, and sets the timer
+  540:				    ; to 27ms instead. This gives a total time between each complement of 42ms.
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 11
+
+
+
+ Line  I  Addr  Code            Source
+
+  541:	  81DA	75 8C 3D	MOV TH0, #03Dh              ; Timer high. Set the timer to a 27ms delay
+  542:	  81DD	75 8A DC	MOV TL0, #0DCh              ; Timer low.
+  543:	  81E0	7B 02		MOV R3, #02h                ; Reset R3 so that timer runs twice
+  544:	  81E2	90 F8 00	MOV DPTR, #port_a
+  545:	  81E5	E0		MOVX A, @DPTR               ; Get current value of port A and put in accumulator
+  546:	  81E6	F4		CPL A                       ; Complement accumulator
+  547:	  81E7	90 F8 00	MOV DPTR, #port_a           ; Set port A
+  548:	  81EA	F0		MOVX @DPTR, A
+  549:	  81EB	90 F8 01	MOV DPTR, #port_b           ; Set port B (sets all of port B, not just PB.0 -> PB.4)
+  550:	  81EE	F0		MOVX @DPTR, A
+  551:	  81EF	22		RET                         ; Exit the program
+  552:
+  553:				;-----------Division------------
+  554:				    ; This sets the ports from 1's to 0's, incrementally, starting from PB.4
+  555:				    ; and moving down to PA.0, eventually turning all 13 pins off.
+  556:				    ; It does this by dividing the current value by two, which is the same
+  557:				    ; as bit shifting right.
+  558:				    ; The time between each light turning off is 27ms
+  559:				;-----Port B-----
+  560:	  81F0			divisionPortB:              ; Start of division port B sequence
+  561:	  81F0	79 01		MOV R1, #01h                ; Reset R1 so that it ignores the DJNZ control sequence
+  562:	  81F2	7C 01		MOV R4, #01h                ; Reset R4 so that it ignores the DJNZ control sequence
+  563:	  81F4	7A 01		MOV R2, #01h                ; Reset R2 so that it ignores the DJNZ control sequence
+  564:
+  565:				    ; After the pins have blinked it will end on a low sequence. The following will
+  566:				    ; only be entered once, and it will set both ports A and B to the required values
+  567:				    ; This is necessary since port B only uses the first five bits, so if it was set to
+  568:				    ; all high then the division sequence would not function correctly.
+  569:	  81F6	B4 00 0D	CJNE A, #00h, doDivision    ; If immediately following blink sequence enter, else skip
+  570:	  81F9	74 FF		MOV A, #0FFh                ; Set port A to its high value (all high)
+  571:	  81FB	90 F8 00	MOV DPTR, #port_a
+  572:	  81FE	F0		MOVX @DPTR, A
+  573:	  81FF	74 1F		MOV A, #1Fh                 ; Set port B to its high value (00011111)
+  574:	  8201	90 F8 01	MOV DPTR, #port_b
+  575:	  8204	F0		MOVX @DPTR, A
+  576:	  8205	22		RET                         ; Exit the program
+  577:
+  578:	  8206			doDivision:
+  579:				    ; This will do actual division and decrement the port B register.
+  580:				    ; The decrement occurs twice so that two pins turn off at once.
+  581:				    ; It will only decrement as specified by R7, and PB.0 will be still set as high
+  582:				    ; after this
+  583:	  8206	14		DEC A                       ; Decrement A
+  584:	  8207	75 F0 02	MOV B, #02h                 ; Reset B value to 2
+  585:	  820A	84		DIV AB                      ; Bit shift right.
+  586:	  820B	14		DEC A                       ; Decrement A
+  587:	  820C	75 F0 02	MOV B, #02h                 ; Reset B value to 2
+  588:	  820F	84		DIV AB                      ; Bit shift right.
+  589:	  8210	90 F8 01	MOV DPTR, #port_b           ; Set port A
+  590:	  8213	F0		MOVX @DPTR, A
+  591:	  8214	22		RET                         ; Exit the program
+  592:
+  593:				;-----Port A-----
+  594:	  8215			divisionPortA:              ; Start of division port A sequence
+  595:	  8215	79 01		MOV R1, #01h                ; Reset R1 so that it ignores the DJNZ control sequence
+  596:	  8217	7C 01		MOV R4, #01h                ; Reset R4 so that it ignores the DJNZ control sequence
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 12
+
+
+
+ Line  I  Addr  Code            Source
+
+  597:	  8219	7A 01		MOV R2, #01h                ; Reset R2 so that it ignores the DJNZ control sequence
+  598:	  821B	7F 01		MOV R7, #01h                ; Reset R7 so that it ignores the DJNZ control sequence
+  599:	  821D	14		DEC A                       ; Decrement A
+  600:	  821E	75 F0 02	MOV B, #02h                 ; Reset B value to 2
+  601:	  8221	84		DIV AB                      ; Bit shift right.
+  602:
+  603:				    ; This sets PB.0 and PA.7 manually to 0 and sets accumulator to the appropriate
+  604:				    ; value for it to continue in port A.
+  605:	  8222	B4 00 0D	CJNE A, #00h, divNotFirst   ; If immediately following port B sequence continue, else skip
+  606:	  8225	90 F8 01	MOV DPTR, #port_b           ; Set port B
+  607:	  8228	74 00		MOV A, #00h
+  608:	  822A	F0		MOVX @DPTR, A
+  609:	  822B	90 F8 00	MOV DPTR, #port_a           ; Set port A
+  610:	  822E	74 7F		MOV A, #7Fh
+  611:	  8230	F0		MOVX @DPTR, A
+  612:	  8231	22		RET                         ; Exit the program
+  613:
+  614:	  8232			divNotFirst:
+  615:				    ; If not the first sequence then divide port A as standard procedure
+  616:	  8232	14		DEC A                       ; Decrement A
+  617:	  8233	75 F0 02	MOV B, #02h                 ; Reset B value to 2
+  618:	  8236	84		DIV AB                      ; Bit shift right.
+  619:	  8237	90 F8 00	MOV DPTR, #port_a           ; Set port A
+  620:	  823A	F0		MOVX @DPTR, A
+  621:	  823B	22		RET                         ; Exit the program
+  622:
+  623:	  823C			theend:                     ; Used as a label to exit the program
+  624:	  823C	22		RET
+  625:
+  626:				;----------End of Light Show Code------------
+  627:
+  628:				;--------Useless Stuff for Later Reference----------
+  629:				; Print the letter C
+  630:	  823D	31 2A		ACALL busy_check
+  631:	  823F	90 FE 02	MOV DPTR, #lcd_data_wr
+  632:	  8242	74 43		MOV A, #43h ; Print the letter
+  633:	  8244	F0		MOVX @DPTR, A
+  634:	  8245	C4		SWAP A
+  635:	  8246	F0		MOVX @DPTR, A
+  636:
+  637:				; For some reason this needed to be outside of the subroutine call. idk why
+  638:				; This works, but not sure where to put it since if it's within a subroutine
+  639:				; or ISR it does not function as intended.
+  640:	  8247	B4 1B 03	CJNE A, #1Bh, escape_not_pressed
+  641:	  824A	02 82 3C	LJMP theend
+  642:	  824D			escape_not_pressed:
+  643:
+  644:	  824D			theend2:
+  645:				END                         ; End of program.
+
+
+
+
+
+                     register banks used:  ---
+
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 13
+
+
+
+                     no errors
+
+
+
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 14
+
+
+
+
+
+	       L I S T   O F   S Y M B O L S
+	       =============================
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+??ASEM_51			  NUMBER    8051
+??VERSION			  NUMBER    0130
+AC				  BIT	      D6
+ACC				  DATA	      E0
+B				  DATA	      F0
+BLINKING			  CODE	    81CE	 531
+BUSY_CHECK			  CODE	    812A	 354
+BUSY_GO				  CODE	    8136	 362
+BUSY_WAIT			  CODE	    812F	 357
+BUTTON_PRESS			  CODE	    80CD	 234
+CHECK_CURSOR_POSITION		  CODE	    8102	 296
+CLEAR_DISP			  CODE	    8120	 332
+CY				  BIT	      D7
+DELAY				  CODE	    80C3	 210
+DELAY2				  CODE	    80C9	 217
+DELAY_TIMER			  CODE	    814B	 394
+DELAY_TIMER2			  CODE	    815C	 408
+DIVISIONPORTA			  CODE	    8215	 594
+DIVISIONPORTB			  CODE	    81F0	 560
+DIVNOTFIRST			  CODE	    8232	 614
+DODIVISION			  CODE	    8206	 578
+DO_NOT_SWITCH			  CODE	    810B	 302
+DO_NOT_SWITCH2			  CODE	    8115	 308
+DPH				  DATA	      83
+DPL				  DATA	      82
+EA				  BIT	      AF
+ES				  BIT	      AC
+ESCAPE_NOT_PRESSED		  CODE	    824D	 642
+ET0				  BIT	      A9
+ET1				  BIT	      AB
+EX0				  BIT	      A8
+EX1				  BIT	      AA
+EXTERN_0			  NUMBER    2003	  33
+EXTI0				  CODE	    0003
+EXTI1				  CODE	    0013
+F0				  BIT	      D5
+HALF_PERIOD			  NUMBER    0020	 198
+IE				  DATA	      A8
+IE0				  BIT	      89
+IE1				  BIT	      8B
+INITIALIZE_LCD			  CODE	    806F	 106
+INIT_DELAY			  CODE	    813E	 382
+INIT_DELAY_SEQUENCE		  CODE	    813A	 378
+INT0				  BIT	      B2
+INT1				  BIT	      B3
+IP				  DATA	      B8
+IT0				  BIT	      88
+IT1				  BIT	      8A
+LCD_COMMAND			  CODE	    8117	 318
+LCD_COMMAND_WR			  NUMBER    FE00	  57
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 15
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+LCD_DATA_RD			  NUMBER    FE03	  60
+LCD_DATA_WR			  NUMBER    FE02	  59
+LCD_STATUS_RD			  NUMBER    FE01	  58
+LCD_SUBROUTINE			  CODE	    80E2	 252
+LOCAT				  NUMBER    8000	  19
+MOVE_CURSOR_HOME		  CODE	    8125	 343
+MULTIPLICATIONPORTA		  CODE	    8192	 475
+MULTIPLICATIONPORTB		  CODE	    81BD	 514
+OFF				  CODE	    80C5	 213
+ON				  CODE	    80BD	 204
+OV				  BIT	      D2
+P				  BIT	      D0
+P0				  DATA	      80
+P1				  DATA	      90
+P2				  DATA	      A0
+P3				  DATA	      B0
+PCON				  DATA	      87
+PORT_A				  NUMBER    F800	  52
+PORT_ABC_PGM			  NUMBER    F803	  54
+PORT_B				  NUMBER    F801	  53
+PS				  BIT	      BC
+PSW				  DATA	      D0
+PT0				  BIT	      B9
+PT1				  BIT	      BB
+PX0				  BIT	      B8
+PX1				  BIT	      BA
+RB8				  BIT	      9A
+RD				  BIT	      B7
+REN				  BIT	      9C
+RESET				  CODE	    0000
+RI				  BIT	      98
+RI_TI				  NUMBER    2023	  43
+RS0				  BIT	      D3
+RS1				  BIT	      D4
+RXD				  BIT	      B0
+SBUF				  DATA	      99
+SCON				  DATA	      98
+SECONDMULT			  CODE	    819F	 487
+SINT				  CODE	    0023
+SM0				  BIT	      9F
+SM1				  BIT	      9E
+SM2				  BIT	      9D
+SP				  DATA	      81
+T0				  BIT	      B4
+T1				  BIT	      B5
+TB8				  BIT	      9B
+TCON				  DATA	      88
+TEMPDIVISIONPORTA		  CODE	    8169	 428
+TEMPDIVISIONPORTB		  CODE	    8167	 426
+TEMPMULTJMP			  CODE	    81BA	 509
+TF0				  BIT	      8D
+TF1				  BIT	      8F
+TH0				  DATA	      8C
+TH1				  DATA	      8D
+THEEND				  CODE	    823C	 623
+THEEND2				  CODE	    824D	 644
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 16
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+TI				  BIT	      99
+TIMER				  NUMBER    200B	  38
+TIMER0				  CODE	    000B
+TIMER1				  CODE	    001B
+TIMERSUBROUTINE			  CODE	    816B	 431
+TIMER_DELAY			  CODE	    8145	 389
+TIMER_DELAY2			  CODE	    8156	 403
+TL0				  DATA	      8A
+TL1				  DATA	      8B
+TMOD				  DATA	      89
+TR0				  BIT	      8C
+TR1				  BIT	      8E
+TXD				  BIT	      B1
+USER_INPUT			  CODE	    80F1	 278
+WR				  BIT	      B6
