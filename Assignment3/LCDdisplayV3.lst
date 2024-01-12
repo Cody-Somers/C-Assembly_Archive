@@ -1,0 +1,691 @@
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 1
+
+
+
+
+
+       MCS-51 Family Macro Assembler   A S E M - 5 1   V 1.3
+       =====================================================
+
+
+
+	Source File:	LCDdisplayV3.asm
+	Object File:	LCDdisplayV3.hex
+	List File:	LCDdisplayV3.lst
+
+
+
+ Line  I  Addr  Code            Source
+
+    1:				; Title: LCDdisplay
+    2:				; Description: This program will initialize the LCD display into 4 bit mode.
+    3:				;   It will print my name and a fake business name to the display, before scrolling
+    4:				;   both of the names off the screen to the right. After the names scroll across
+    5:				;   they will flash on the left, then the right, then the centre and hold there.
+    6:				;   After the process is finished it will repeat with the names swapped lines.
+    7:				; Author: Cody Somers, 11271716
+    8:				; Date Created: Oct 10, 2022
+    9:				; Last Edited: Oct 28, 2022
+   10:				; Due Date: Nov 1, 2022
+   11:				; Microcontroller: 8051 with Paulmon
+   12:				; Variables:
+   13:				;   Inputs: None
+   14:				;   Outputs: Writing display on the LCD
+   15:
+   16:				;---------Initialize Board----------
+   17:		N      8000	locat  EQU 8000h                ;Location for this program
+   18:		N      8000	ORG    locat
+   19:
+   20:	  8000	A5 E5 E0 A5	DB     0A5h,0E5h,0E0h,0A5h      ;signature bytes
+   21:	  8004	23 FF 00 00	DB     35,255,0,0               ;id (35=prog)
+   22:	  8008	00 00 00 00	DB     0,0,0,0                  ;prompt code vector
+   23:	  800C	00 00 00 00	DB     0,0,0,0                  ;reserved
+   24:	  8010	00 00 00 00	DB     0,0,0,0                  ;reserved
+   25:	  8014	00 00 00 00	DB     0,0,0,0                  ;reserved
+   26:	  8018	00 00 00 00	DB     0,0,0,0                  ;user defined
+   27:	  801C	FF FF FF FF	DB     255,255,255,255          ;length and checksum (255=unused)
+   28:	  8020	41 73 73 69	DB     "Assignment3V3",0	      ;max 31 characters, plus the zero
+	  8024	67 6E 6D 65
+	  8028	6E 74 33 56
+	  802C	33 00
+   29:
+   30:		N      F800	port_a EQU 0F800h           ; Location of port A
+   31:		N      F801	port_b EQU 0F801h           ; Location of port B
+   32:		N      F803	port_abc_pgm EQU 0F803h     ; Configuration byte for ports A,B,C
+   33:
+   34:		N      FE00	lcd_command_wr EQU 0FE00h   ; Write only
+   35:		N      FE01	lcd_status_rd EQU 0FE01h    ; Read only
+   36:		N      FE02	lcd_data_wr EQU 0FE02h      ; Write only
+   37:		N      FE03	lcd_data_rd EQU 0FE03h      ; Read only
+   38:
+   39:		N      8040	ORG    locat+64             ; executable code begins here
+   40:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 2
+
+
+
+ Line  I  Addr  Code            Source
+
+   41:				;-----------Configure Ports----------
+   42:	  8040	90 F8 03	MOV DPTR, #port_abc_pgm     ; Configuration byte for ports A,B,C
+   43:	  8043	74 80		MOV A, #128
+   44:	  8045	F0		MOVX @DPTR, A
+   45:
+   46:				;--------Initialize LCD Screen--------
+   47:				; Description: These steps follow the timing guide.
+   48:				;   We power on, wait for 15ms.
+   49:				;   Set the function in 8bit mode
+   50:				;   Wait again for 4.1ms
+   51:				;   Set the function in 8bit mode
+   52:				;   Wait again for 100us
+   53:				;   Set the function in 8bit mode one final time. Then the BF can be checked and
+   54:				;   the rest of the initialization process can happen:
+   55:				;     This involves setting it to 4bit mode, then clearing display etc.
+   56:				; Variables: Uses A and DPTR
+   57:				;   Input: None
+   58:				;   Output: Initialize the board into 4 bit mode
+   59:
+   60:	  8046			initialize_LCD:
+   61:				; Wait for 15ms
+   62:	  8046	31 7A		ACALL init_delay_sequence
+   63:	  8048	31 7A		ACALL init_delay_sequence
+   64:	  804A	31 7A		ACALL init_delay_sequence
+   65:	  804C	31 7A		ACALL init_delay_sequence
+   66:
+   67:				; Function Set Command (8-bit interface)
+   68:	  804E	90 FE 00	MOV DPTR, #lcd_command_wr
+   69:	  8051	74 30		MOV A, #30h                 ; Necessary value that sets DB5,4 to high
+   70:	  8053	F0		MOVX @DPTR, A
+   71:
+   72:				; Wait 4.2ms
+   73:	  8054	31 7A		ACALL init_delay_sequence
+   74:
+   75:				; Function Set Command (8-bit interface)
+   76:	  8056	90 FE 00	MOV DPTR, #lcd_command_wr
+   77:	  8059	74 30		MOV A, #30h                 ; Necessary value that sets DB5,4 to high
+   78:	  805B	F0		MOVX @DPTR, A
+   79:
+   80:				; Wait 4.2ms (Only 100us necessary)
+   81:	  805C	31 7A		ACALL init_delay_sequence
+   82:
+   83:				; Function Set Command (8-bit interface)
+   84:	  805E	90 FE 00	MOV DPTR, #lcd_command_wr
+   85:	  8061	74 30		MOV A, #30h                 ; Necessary value that sets DB5,4 to high
+   86:	  8063	F0		MOVX @DPTR, A
+   87:
+   88:				; Wait 4.2ms (Might not be necessary)
+   89:	  8064	31 7A		ACALL init_delay_sequence
+   90:
+   91:				; Set into 4-bit mode
+   92:	  8066	90 FE 00	MOV DPTR, #lcd_command_wr
+   93:	  8069	74 20		MOV A, #20h                 ; Sets it to 4-bit mode
+   94:	  806B	F0		MOVX @DPTR, A
+   95:
+   96:				;-------Set initial parameters-------
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 3
+
+
+
+ Line  I  Addr  Code            Source
+
+   97:				; Description: The board is now initialized and the rest of the board is set
+   98:				;   This puts it in 4-bit mode and 2 line display, cursor and blink disabled,
+   99:				;   shift mode to right cursor shift(might not be used) initial address to write
+  100:				;   which is first line of display, then entry mode(might not be used) so that cursor
+  101:				;   moves right.
+  102:				; Variables: Uses A and DPTR
+  103:				;   Input: None
+  104:				;   Output: Completes initialization of LCD
+  105:
+  106:				; Set the rest of the stuff. Everything from this point on will be required to send or receive data
+				twice.
+  107:	  806C	31 7A		ACALL init_delay_sequence   ; Wait 4.2ms
+  108:	  806E	74 28		MOV A, #28h                 ; Sets it to 4-bit mode and 2 line display
+  109:	  8070	31 21		ACALL lcd_command           ; lcd_command is in 4-bit mode and only works as such
+  110:
+  111:				; Clear the display
+  112:	  8072	31 2A		ACALL clear_disp
+  113:
+  114:				; Turn on display, with cursor and blinking cursor disabled
+  115:	  8074	74 0C		MOV A, #0Ch                 ; Set this back to 0Ch. Set to 0F for debug purposes
+  116:	  8076	31 21		ACALL lcd_command
+  117:
+  118:				; Set shift mode to right cursor shift
+  119:	  8078	74 10		MOV A, #10h                 ; Set to 14 or 10. Seems to have no difference
+  120:	  807A	31 21		ACALL lcd_command
+  121:
+  122:				; Set display buffer RAM address. This sets the cursor to the beginning of the first line.
+  123:	  807C	74 80		MOV A, #80h                 ; Set to 80
+  124:	  807E	31 21		ACALL lcd_command
+  125:
+  126:				; Set entry mode so that cursor moves to the right but display not shifted
+  127:	  8080	74 06		MOV A, #06h                 ; Set to 06
+  128:	  8082	31 21		ACALL lcd_command
+  129:
+  130:
+  131:				;-------Start of Main Program--------
+  132:				; Description: This calls all the required subroutines in an infinite loop
+  133:				;   that prints all the values to the screen in the required timings
+  134:				; Variables: Uses A
+  135:				;   Input: None
+  136:				;   Output: Output on the LCD display
+  137:
+  138:	  8084			infinite_loop:
+  139:	  8084	31 34		  ACALL print_name          ; Print my name to the first line
+  140:	  8086	74 C0		  MOV A, #0C0h              ; Set cursor to second line
+  141:	  8088	31 21		  ACALL lcd_command
+  142:	  808A	31 4F		  ACALL print_business      ; Print business name to second line
+  143:	  808C	31 16		  ACALL shift_right         ; Perform the shifting operation
+  144:	  808E	11 C0		  ACALL flash_name          ; Perform the name flashing operation
+  145:
+  146:	  8090	31 4F		  ACALL print_business ; Print the business name on the first line
+  147:	  8092	74 C0		  MOV A, #0C0h              ; Set cursor to second line
+  148:	  8094	31 21		  ACALL lcd_command
+  149:	  8096	31 34		  ACALL print_name          ; Print my name to the second line
+  150:	  8098	31 16		  ACALL shift_right         ; Perform the shifting operation
+  151:	  809A	11 EB		  ACALL flash_name2         ; Perform the name flashing operation
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 4
+
+
+
+ Line  I  Addr  Code            Source
+
+  152:
+  153:	  809C	80 E6		SJMP infinite_loop
+  154:				; The only thing left to do is get a proper bit acc.7 check, but not sure how to do that
+  155:	  809E	21 C2		AJMP theend                 ; Never reached, but will exit the program. (debugging)
+  156:
+  157:				;--------End of Main Program----------
+  158:
+  159:
+  160:				;-----------Strings-----------
+  161:				; Description: Holds the strings for my name and the business name
+  162:				; Variables: Strings stored in bytes of memory
+  163:				;   Input: None
+  164:				;   Output: None
+  165:
+  166:	  80A0			cody_string:
+  167:	  80A0	20 43 6F 64	DB " Cody Somers", 0
+	  80A4	79 20 53 6F
+	  80A8	6D 65 72 73
+	  80AC	00
+  168:
+  169:	  80AD			business_string:
+  170:	  80AD	20 54 72 69	DB " Tri-Flexa Designs", 0
+	  80B1	2D 46 6C 65
+	  80B5	78 61 20 44
+	  80B9	65 73 69 67
+	  80BD	6E 73 00
+  171:
+  172:				;-----------Subroutines------------
+  173:
+  174:				;-----Flash Name-----
+  175:				; Description: The two subroutines below will flash the names at left-justified,
+  176:				;   right-justified, at 137ms, then hold in the centre for 3.4s.
+  177:				;   The subroutines are identical except for the order of which they print the
+  178:				;   business and name to the LCD.
+  179:				; Variables: Uses A
+  180:				;   Input: None
+  181:				;   Output: Flashes the name left, right, centre on LCD
+  182:				; Routine the flashes the program left, right, and centre
+  183:				; Print name first, then business
+  184:	  80C0			flash_name:
+  185:				  ; Set the display to be left aligned
+  186:	  80C0	31 2F		  ACALL move_cursor_home    ; Align left
+  187:	  80C2	31 85		  ACALL timer_delay         ; Wait on 137ms
+  188:	  80C4	31 2A		  ACALL clear_disp          ; Clear display
+  189:	  80C6	31 85		  ACALL timer_delay         ; Wait off 137ms
+  190:
+  191:				  ; Set the display to be right aligned
+  192:	  80C8	74 89		  MOV A, #089h              ; Set cursor to first line, right aligned
+  193:	  80CA	31 21		  ACALL lcd_command
+  194:	  80CC	31 34		  ACALL print_name          ; Print name
+  195:	  80CE	74 C3		  MOV A, #0C3h              ; Set cursor to second line, right aligned
+  196:	  80D0	31 21		  ACALL lcd_command
+  197:	  80D2	31 4F		  ACALL print_business      ; Print business
+  198:
+  199:	  80D4	31 85		  ACALL timer_delay         ; Wait on 137ms
+  200:	  80D6	31 2A		  ACALL clear_disp          ; Clear display
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 5
+
+
+
+ Line  I  Addr  Code            Source
+
+  201:	  80D8	31 85		  ACALL timer_delay         ; Wait off 137ms
+  202:
+  203:				  ; Set the display to be centre aligned
+  204:	  80DA	74 84		  MOV A, #084h              ; Set cursor to first line, centred
+  205:	  80DC	31 21		  ACALL lcd_command
+  206:	  80DE	31 34		  ACALL print_name          ; Print name
+  207:	  80E0	74 C1		  MOV A, #0C1h              ; Set cursor to second line, centred
+  208:	  80E2	31 21		  ACALL lcd_command
+  209:	  80E4	31 4F		  ACALL print_business      ; Print business
+  210:
+  211:	  80E6	31 96		  ACALL timer_delay2        ; Wait on 3.4s
+  212:	  80E8	31 2A		  ACALL clear_disp          ; Clear everything
+  213:	  80EA	22		RET
+  214:
+  215:				; Routine the flashes the program left, right, and centre
+  216:				; Print business, then name
+  217:	  80EB			flash_name2:
+  218:				  ; Set the display to be left aligned
+  219:	  80EB	31 2F		  ACALL move_cursor_home    ; Align left
+  220:	  80ED	31 85		  ACALL timer_delay         ; Wait on 137ms
+  221:	  80EF	31 2A		  ACALL clear_disp          ; Clear display
+  222:	  80F1	31 85		  ACALL timer_delay         ; Wait off 137ms
+  223:
+  224:				  ; Set the display to be right aligned
+  225:	  80F3	74 83		  MOV A, #083h              ; Set cursor to first line, right aligned
+  226:	  80F5	31 21		  ACALL lcd_command
+  227:	  80F7	31 4F		  ACALL print_business      ; Print business
+  228:	  80F9	74 C9		  MOV A, #0C9h              ; Set cursor to second line, right aligned
+  229:	  80FB	31 21		  ACALL lcd_command
+  230:	  80FD	31 34		  ACALL print_name          ; Print name
+  231:
+  232:	  80FF	31 85		  ACALL timer_delay         ; Wait on 137ms
+  233:	  8101	31 2A		  ACALL clear_disp          ; Clear display
+  234:	  8103	31 85		  ACALL timer_delay         ; Wait off 137ms
+  235:
+  236:				  ; Set the display to be centre aligned
+  237:	  8105	74 81		  MOV A, #081h              ; Set cursor to first line, centred
+  238:	  8107	31 21		  ACALL lcd_command
+  239:	  8109	31 4F		  ACALL print_business      ; Print business
+  240:	  810B	74 C4		  MOV A, #0C4h              ; Set cursor to second line, centred
+  241:	  810D	31 21		  ACALL lcd_command
+  242:	  810F	31 34		  ACALL print_name          ; Print name
+  243:
+  244:	  8111	31 96		  ACALL timer_delay2        ; Wait on 3.4s
+  245:	  8113	31 2A		  ACALL clear_disp          ; Clear everything
+  246:	  8115	22		RET
+  247:
+  248:				;-----Shift Right-----
+  249:				; Description: This shifts the entire display to the right. Shifts it 20 times
+  250:				;   which is the size of the display so that anything on the display runs off
+  251:				;   to the right. Timing set by ticker_tape timer
+  252:				; Variables: Uses R3, and A
+  253:				;   Input: None
+  254:				;   Output: Shifts the display right
+  255:	  8116			shift_right:
+  256:	  8116	7B 15		  MOV R3, #21               ; The number of shifts to perform
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 6
+
+
+
+ Line  I  Addr  Code            Source
+
+  257:	  8118			  shift_loop:
+  258:				  ; Set shift mode to right display shift
+  259:	  8118	31 A7		  ACALL ticker_tape         ; Slow down the tape speed
+  260:	  811A	74 1F		  MOV A, #1Fh               ; Set to 1C or 1F to perform right shift action
+  261:	  811C	31 21		  ACALL lcd_command
+  262:	  811E	DB F8		  DJNZ R3, shift_loop       ; Loop R3 number of times
+  263:	  8120	22		RET
+  264:
+  265:				;-----LCD Command-----
+  266:				; Description: This is the 4 bit action the performs a write to the command
+  267:				;   register. Saves space for repetition.
+  268:				; Variables: Uses A and DPTR
+  269:				;   Input: The value of A needs to be set before calling this subroutine
+  270:				;   Output: Puts the command given in A to the command write
+  271:	  8121			lcd_command:
+  272:	  8121	31 6A		  ACALL busy_check          ; Checks if busy
+  273:	  8123	90 FE 00	  MOV DPTR, #lcd_command_wr ; Moves to command_wr
+  274:	  8126	F0		  MOVX @DPTR, A             ; First four bits (high bits 7-4)
+  275:	  8127	C4		  SWAP A                    ; Swap
+  276:	  8128	F0		  MOVX @DPTR, A             ; Second four bits (low bits 3-0)
+  277:	  8129	22		RET
+  278:
+  279:				;-----Clear Display-----
+  280:				; Description: A specific command that sets A to the appropriate value for clearing
+  281:				;   the display.
+  282:				; Variables: Uses A
+  283:				;   Input: None
+  284:				;   Output: Clears the display on the board
+  285:	  812A			clear_disp:
+  286:	  812A	74 01		  MOV A, #01h               ; Command for clear
+  287:	  812C	31 21		  ACALL lcd_command         ; Perform action
+  288:	  812E	22		RET
+  289:
+  290:				;-----Move Cursor Home-----
+  291:				; Description: Returns the position of the screen to its original position
+  292:				; Variables: Uses A
+  293:				;   Input: None
+  294:				;   Output: Returns screen position to home
+  295:				; Move the cursor to the home position
+  296:	  812F			move_cursor_home:
+  297:	  812F	74 02		  MOV A, #02h               ; Move cursor to home position
+  298:	  8131	31 21		  ACALL lcd_command
+  299:	  8133	22		RET
+  300:
+  301:				;-----Print Name-----
+  302:				; Description: Loops through my name and print the characters to the board at the
+  303:				;   current location of the cursor.
+  304:				; Variables: Uses R2, R3, R4, and A
+  305:				;   Input: None
+  306:				;   Output: Prints entire string of my name to the LCD
+  307:				; Prints my name to the board at the cursor location
+  308:	  8134			print_name:
+  309:	  8134	7A 0B		  MOV R2, #11               ; Number of letters in the string to print out
+  310:	  8136	7B 01		  MOV R3, #1                ; Register used for incrementing the DPTR to get proper character
+  311:	  8138	7C 01		  MOV R4, #1                ; Register used for keeping track of the number of loops
+  312:	  813A			  print_name2:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 7
+
+
+
+ Line  I  Addr  Code            Source
+
+  313:	  813A	EC		  MOV A, R4                 ; R4 needs to be put in R3, but has to go through A
+  314:	  813B	FB		  MOV R3, A                 ; R3 now has the current character to output
+  315:
+  316:	  813C	31 6A		  ACALL busy_check
+  317:	  813E	90 80 A0	  MOV DPTR, #cody_string    ; Move to the string of my name
+  318:
+  319:	  8141			  increment_name:
+  320:	  8141	A3		  INC DPTR                  ; Move to the next character
+  321:	  8142	DB FD		  DJNZ R3, increment_name   ; The character it moves to is determined by value in R3
+  322:
+  323:	  8144	E0		  MOVX A, @DPTR             ; Move the character in string to A
+  324:	  8145	90 FE 02	  MOV DPTR, #lcd_data_wr    ; Move DPTR to data_wr
+  325:	  8148	F0		  MOVX @DPTR, A             ; Write character to board in two nibbles
+  326:	  8149	C4		  SWAP A
+  327:	  814A	F0		  MOVX @DPTR, A
+  328:
+  329:	  814B	0C		  INC R4                    ; Increment loop counter so that R3 increases the number
+  330:				                            ; of times it increments DPTR for character.
+  331:	  814C	DA EC		  DJNZ R2, print_name2      ; Go through R2 number of times.
+  332:	  814E	22		RET
+  333:
+  334:				;-----Print Business-----
+  335:				; Description: Loops through the business name and print the characters to the board at the
+  336:				;   current location of the cursor.
+  337:				; Variables: Uses R2, R3, R4, and A
+  338:				;   Input: None
+  339:				;   Output: Prints entire string of business name to the LCD
+  340:	  814F			print_business:
+  341:	  814F	7A 11		  MOV R2, #17               ; Number of letters in the string to print out
+  342:	  8151	7B 01		  MOV R3, #1                ; Register used for incrementing the DPTR to get proper character
+  343:	  8153	7C 01		  MOV R4, #1                ; Register used for keeping track of the number of loops
+  344:	  8155			  print_business2:
+  345:	  8155	EC		  MOV A, R4                 ; R4 needs to be put in R3, but has to go through A
+  346:	  8156	FB		  MOV R3, A                 ; R3 now has the current character to output
+  347:
+  348:	  8157	31 6A		  ACALL busy_check
+  349:	  8159	90 80 AD	  MOV DPTR, #business_string ; Move to the business string
+  350:
+  351:	  815C			  increment_business:
+  352:	  815C	A3		  INC DPTR                  ; Move to the next character
+  353:	  815D	DB FD		  DJNZ R3, increment_business ; The character it moves to is determined by value in R3
+  354:
+  355:	  815F	E0		  MOVX A, @DPTR             ; Move the character in string to A
+  356:	  8160	90 FE 02	  MOV DPTR, #lcd_data_wr    ; Move DPTR to data_wr
+  357:	  8163	F0		  MOVX @DPTR, A             ; Write character to board in two nibbles
+  358:	  8164	C4		  SWAP A
+  359:	  8165	F0		  MOVX @DPTR, A
+  360:
+  361:	  8166	0C		  INC R4                    ; Increment loop counter so that R3 increases the number
+  362:				                            ; of times it increments DPTR for character.
+  363:	  8167	DA EC		  DJNZ R2, print_business2  ; Go through R2 number of times.
+  364:	  8169	22		RET
+  365:
+  366:				;-----Busy Check-----
+  367:				; Description: Checks the busy flag and only allows the program to continue if
+  368:				;   the busy flag is not set.
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 8
+
+
+
+ Line  I  Addr  Code            Source
+
+  369:				; Variables: Uses A
+  370:				;   Input: None
+  371:				;   Output: Time delay
+  372:	  816A			busy_check:
+  373:	  816A	C0 E0		  PUSH ACC                  ; Store value in A
+  374:	  816C	90 FE 01	  MOV DPTR, #lcd_status_rd  ; Move to status register
+  375:	  816F			  busy_wait:
+  376:	  816F	E0		  MOVX A, @DPTR             ; First 4 bits
+  377:	  8170	30 E7 03	  JNB acc.7, busy_go        ; If the data bit is not set, program is clear to return (busy_go)
+  378:	  8173	E0		  MOVX A, @DPTR             ; Second 4 bits. Not read but necessary for completeness
+  379:	  8174	80 F9		  SJMP busy_wait            ; Loop while busy flag is set
+  380:	  8176			  busy_go:
+  381:	  8176	E0		  MOVX A, @DPTR             ; Second 4 bits. Ignored
+  382:	  8177	D0 E0		  POP ACC                   ; Return value in A
+  383:	  8179	22		RET
+  384:
+  385:				;---------Delay Timers---------
+  386:				; Description:The timers all function the same, they just have a different duration.
+  387:				;   For every full decrement of the first register, the second (or third) register
+  388:				;   will only decrement once. Since the DJNZ takes two clock cycles, the total number
+  389:				;   of clock cycles taken by a timer can be found by 2*R0*R1, with each clock
+  390:				;   cycle being roughly 0.5us
+  391:				; Variables: Makes use of R0, R1 and R2
+  392:				;   Inputs: None
+  393:				;   Outputs: Time delay
+  394:
+  395:				; A timer used for the initialization phase
+  396:	  817A			init_delay_sequence:
+  397:				  ; Wait for 4.3ms
+  398:	  817A	78 2D		  MOV R0, #45               ; Divided by 2
+  399:	  817C	79 5A		  MOV R1, #90
+  400:	  817E			  init_delay:               ; Set for a 4.3ms delay
+  401:	  817E	D8 FE		    DJNZ R0, init_delay
+  402:	  8180	78 2D		    MOV R0, #45
+  403:	  8182	D9 FA		    DJNZ R1, init_delay
+  404:	  8184	22		RET
+  405:
+  406:				; A timer for the blinking left, right portion
+  407:	  8185			timer_delay:
+  408:				  ; Wait for 137ms
+  409:	  8185	78 79		  MOV R0, #121              ; Divided by 2
+  410:	  8187	79 3A		  MOV R1, #58
+  411:	  8189	7A 12		  MOV R2, #18
+  412:	  818B			  delay_timer:              ; Set for a 137ms delay
+  413:	  818B	D8 FE		    DJNZ R0, delay_timer
+  414:	  818D	78 79		    MOV R0, #121
+  415:	  818F	D9 FA		    DJNZ R1, delay_timer
+  416:	  8191	79 3A		    MOV R1, #58
+  417:	  8193	DA F6		    DJNZ R2, delay_timer
+  418:	  8195	22		RET
+  419:
+  420:				; A timer for holding in the centre
+  421:	  8196			timer_delay2:
+  422:				  ; Wait for 3.4s
+  423:	  8196	78 58		  MOV R0, #88               ; Divided by 2
+  424:	  8198	79 B2		  MOV R1, #178
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 9
+
+
+
+ Line  I  Addr  Code            Source
+
+  425:	  819A	7A C8		  MOV R2, #200
+  426:	  819C			  delay_timer2:             ; Set for a 3.4s delay
+  427:	  819C	D8 FE		    DJNZ R0, delay_timer2
+  428:	  819E	78 58		    MOV R0, #88
+  429:	  81A0	D9 FA		    DJNZ R1, delay_timer2
+  430:	  81A2	79 B2		    MOV R1, #178
+  431:	  81A4	DA F6		    DJNZ R2, delay_timer2
+  432:	  81A6	22		RET
+  433:
+  434:				; A timer that changes how quickly the names shift across the screen.
+  435:	  81A7			ticker_tape:
+  436:				  ; Wait for however long/short you want that looks good
+  437:	  81A7	78 4B		  MOV R0, #75
+  438:	  81A9	79 4B		  MOV R1, #75
+  439:	  81AB	7A 4B		  MOV R2, #75
+  440:	  81AD			  delay_ticker:
+  441:	  81AD	D8 FE		    DJNZ R0, delay_ticker
+  442:	  81AF	78 4B		    MOV R0, #75
+  443:	  81B1	D9 FA		    DJNZ R1, delay_ticker
+  444:	  81B3	79 4B		    MOV R1, #75
+  445:	  81B5	DA F6		    DJNZ R2, delay_ticker
+  446:	  81B7	22		RET
+  447:
+  448:				;--------Useless Stuff for Later Reference----------
+  449:				; Print the letter C
+  450:	  81B8	31 6A		ACALL busy_check
+  451:	  81BA	90 FE 02	MOV DPTR, #lcd_data_wr
+  452:	  81BD	74 43		MOV A, #43h ; Print the letter
+  453:	  81BF	F0		MOVX @DPTR, A
+  454:	  81C0	C4		SWAP A
+  455:	  81C1	F0		MOVX @DPTR, A
+  456:
+  457:	  81C2			theend:
+  458:				END                         ; End of program.
+
+
+
+
+
+                     register banks used:  ---
+
+                     no errors
+
+
+
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 10
+
+
+
+
+
+	       L I S T   O F   S Y M B O L S
+	       =============================
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+??ASEM_51			  NUMBER    8051
+??VERSION			  NUMBER    0130
+AC				  BIT	      D6
+ACC				  DATA	      E0
+B				  DATA	      F0
+BUSINESS_STRING			  CODE	    80AD	 169
+BUSY_CHECK			  CODE	    816A	 372
+BUSY_GO				  CODE	    8176	 380
+BUSY_WAIT			  CODE	    816F	 375
+CLEAR_DISP			  CODE	    812A	 285
+CODY_STRING			  CODE	    80A0	 166
+CY				  BIT	      D7
+DELAY_TICKER			  CODE	    81AD	 440
+DELAY_TIMER			  CODE	    818B	 412
+DELAY_TIMER2			  CODE	    819C	 426
+DPH				  DATA	      83
+DPL				  DATA	      82
+EA				  BIT	      AF
+ES				  BIT	      AC
+ET0				  BIT	      A9
+ET1				  BIT	      AB
+EX0				  BIT	      A8
+EX1				  BIT	      AA
+EXTI0				  CODE	    0003
+EXTI1				  CODE	    0013
+F0				  BIT	      D5
+FLASH_NAME			  CODE	    80C0	 184
+FLASH_NAME2			  CODE	    80EB	 217
+IE				  DATA	      A8
+IE0				  BIT	      89
+IE1				  BIT	      8B
+INCREMENT_BUSINESS		  CODE	    815C	 351
+INCREMENT_NAME			  CODE	    8141	 319
+INFINITE_LOOP			  CODE	    8084	 138
+INITIALIZE_LCD			  CODE	    8046	  60
+INIT_DELAY			  CODE	    817E	 400
+INIT_DELAY_SEQUENCE		  CODE	    817A	 396
+INT0				  BIT	      B2
+INT1				  BIT	      B3
+IP				  DATA	      B8
+IT0				  BIT	      88
+IT1				  BIT	      8A
+LCD_COMMAND			  CODE	    8121	 271
+LCD_COMMAND_WR			  NUMBER    FE00	  34
+LCD_DATA_RD			  NUMBER    FE03	  37
+LCD_DATA_WR			  NUMBER    FE02	  36
+LCD_STATUS_RD			  NUMBER    FE01	  35
+LOCAT				  NUMBER    8000	  17
+MOVE_CURSOR_HOME		  CODE	    812F	 296
+OV				  BIT	      D2
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 11
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+P				  BIT	      D0
+P0				  DATA	      80
+P1				  DATA	      90
+P2				  DATA	      A0
+P3				  DATA	      B0
+PCON				  DATA	      87
+PORT_A				  NUMBER    F800	  30
+PORT_ABC_PGM			  NUMBER    F803	  32
+PORT_B				  NUMBER    F801	  31
+PRINT_BUSINESS			  CODE	    814F	 340
+PRINT_BUSINESS2			  CODE	    8155	 344
+PRINT_NAME			  CODE	    8134	 308
+PRINT_NAME2			  CODE	    813A	 312
+PS				  BIT	      BC
+PSW				  DATA	      D0
+PT0				  BIT	      B9
+PT1				  BIT	      BB
+PX0				  BIT	      B8
+PX1				  BIT	      BA
+RB8				  BIT	      9A
+RD				  BIT	      B7
+REN				  BIT	      9C
+RESET				  CODE	    0000
+RI				  BIT	      98
+RS0				  BIT	      D3
+RS1				  BIT	      D4
+RXD				  BIT	      B0
+SBUF				  DATA	      99
+SCON				  DATA	      98
+SHIFT_LOOP			  CODE	    8118	 257
+SHIFT_RIGHT			  CODE	    8116	 255
+SINT				  CODE	    0023
+SM0				  BIT	      9F
+SM1				  BIT	      9E
+SM2				  BIT	      9D
+SP				  DATA	      81
+T0				  BIT	      B4
+T1				  BIT	      B5
+TB8				  BIT	      9B
+TCON				  DATA	      88
+TF0				  BIT	      8D
+TF1				  BIT	      8F
+TH0				  DATA	      8C
+TH1				  DATA	      8D
+THEEND				  CODE	    81C2	 457
+TI				  BIT	      99
+TICKER_TAPE			  CODE	    81A7	 435
+TIMER0				  CODE	    000B
+TIMER1				  CODE	    001B
+TIMER_DELAY			  CODE	    8185	 407
+TIMER_DELAY2			  CODE	    8196	 421
+TL0				  DATA	      8A
+TL1				  DATA	      8B
+TMOD				  DATA	      89
+TR0				  BIT	      8C
+TR1				  BIT	      8E
+
+ASEM-51 V1.3                                        Copyright (c) 2002 by W.W. Heinz                                         PAGE 12
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+TXD				  BIT	      B1
+WR				  BIT	      B6

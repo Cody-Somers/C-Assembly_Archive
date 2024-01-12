@@ -1,0 +1,279 @@
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 1
+
+
+
+
+
+       MCS-51 Family Macro Assembler   A S E M - 5 1   V 1.3
+       =====================================================
+
+
+
+	Source File:	LCDdisplay.asm
+	Object File:	LCDdisplay.hex
+	List File:	LCDdisplay.lst
+
+
+
+ Line  I  Addr  Code            Source
+
+    1:				; Title: Light Show
+    2:				; Description:
+    3:				; Author: Cody Somers, 11271716
+    4:				; Date Created: Oct 10, 2022
+    5:				; Last Edited: Oct , 2022
+    6:				; Due Date: Nov 1, 2022
+    7:				; Microcontroller: 8051 with Paulmon
+    8:				; Variables:
+    9:				;   Inputs:
+   10:				;   Outputs:
+   11:
+   12:				;---------Initialize Board----------
+   13:		N      8000	locat  EQU 8000h                ;Location for this program
+   14:		N      8000	ORG    locat
+   15:
+   16:	  8000	A5 E5 E0 A5	DB     0A5h,0E5h,0E0h,0A5h      ;signiture bytes
+   17:	  8004	23 FF 00 00	DB     35,255,0,0               ;id (35=prog)
+   18:	  8008	00 00 00 00	DB     0,0,0,0                  ;prompt code vector
+   19:	  800C	00 00 00 00	DB     0,0,0,0                  ;reserved
+   20:	  8010	00 00 00 00	DB     0,0,0,0                  ;reserved
+   21:	  8014	00 00 00 00	DB     0,0,0,0                  ;reserved
+   22:	  8018	00 00 00 00	DB     0,0,0,0                  ;user defined
+   23:	  801C	FF FF FF FF	DB     255,255,255,255          ;length and checksum (255=unused)
+   24:	  8020	41 73 73 69	DB     "Assignment3",0	      ;max 31 characters, plus the zero
+	  8024	67 6E 6D 65
+	  8028	6E 74 33 00
+   25:
+   26:		N      F800	port_a EQU 0F800h           ; Location of port A
+   27:		N      F801	port_b EQU 0F801h           ; Location of port B
+   28:		N      F803	port_abc_pgm EQU 0F803h     ; Configuration byte for ports A,B,C
+   29:
+   30:		N      FE00	lcd_command_wr EQU 0FE00h ; Write only
+   31:		N      FE01	lcd_status_rd EQU 0FE01h ; Read only
+   32:		N      FE02	lcd_data_wr EQU 0FE02h ; Write only
+   33:		N      FE03	lcd_data_rd EQU 0FE03h ; Read only
+   34:
+   35:		N      8040	ORG    locat+64             ; executable code begins here
+   36:
+   37:				;-----------Configure Ports----------
+   38:	  8040	90 F8 03	MOV DPTR, #port_abc_pgm     ; Configuration byte for ports A,B,C
+   39:	  8043	74 80		MOV A, #128
+   40:	  8045	F0		MOVX @DPTR, A
+   41:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 2
+
+
+
+ Line  I  Addr  Code            Source
+
+   42:				;-----------Main Program------------
+   43:				;ACALL busy_check
+   44:				;ACALL configure_LCD
+   45:	  8046	11 60		ACALL busy_check
+   46:	  8048	11 8A		ACALL clear_disp
+   47:	  804A	11 60		ACALL busy_check
+   48:	  804C	11 68		ACALL move_cursor_home
+   49:
+   50:	  804E			main_program: ; Infinite loop running the code
+   51:	  804E	11 60		ACALL busy_check
+   52:	  8050	90 FE 02	MOV DPTR, #lcd_data_wr
+   53:	  8053	74 21		MOV A, #21h ; Print the letter
+   54:	  8055	F0		MOVX @DPTR, A
+   55:
+   56:	  8056	11 60		ACALL busy_check
+   57:	  8058	90 FE 02	MOV DPTR, #lcd_data_wr
+   58:	  805B	74 22		MOV A, #22h ; Print the letter
+   59:	  805D	F0		MOVX @DPTR, A
+   60:
+   61:	  805E	80 33		SJMP theend
+   62:
+   63:
+   64:				;-----------Subroutines------------
+   65:
+   66:				; Code for checking that the LCD is not busy.
+   67:	  8060			busy_check:
+   68:				  ;MOV R0, A ; Save value in A
+   69:	  8060	90 FE 01	  MOV DPTR, #lcd_status_rd
+   70:	  8063	E0		  lcd_wait: MOVX A, @DPTR
+   71:	  8064	20 E7 FC	    JB acc.7, lcd_wait
+   72:				  ;MOV A, R0 ; Return value to A.
+   73:	  8067	22		RET
+   74:
+   75:				; Move the cursor to the home position
+   76:	  8068			move_cursor_home:
+   77:				  ;MOV R0, A ; Save value in A
+   78:	  8068	11 60		  ACALL busy_check ; Check if busy
+   79:	  806A	90 FE 00	  MOV DPTR, #lcd_command_wr
+   80:	  806D	74 02		  MOV A, #02h ; Move cursor to home position
+   81:	  806F	F0		  MOVX @DPTR, A
+   82:				  ;MOV A, R0 ; Return value to A.
+   83:	  8070	22		RET
+   84:
+   85:				; Configure LCD for use
+   86:	  8071			configure_LCD:
+   87:				  ;MOV R0, A ; Save value in A
+   88:
+   89:	  8071	11 60		  ACALL busy_check
+   90:	  8073	90 FE 00	  MOV DPTR, #lcd_command_wr
+   91:	  8076	74 28		  MOV A, #28h ; Configure the LCD to have 2 line display, 4 bit interface, 5x7 pixel
+   92:	  8078	F0		  MOVX @DPTR, A
+   93:
+   94:	  8079	11 60		  ACALL busy_check
+   95:	  807B	90 FE 00	  MOV DPTR, #lcd_command_wr
+   96:	  807E	74 0C		  MOV A, #0Ch ; Turn on display, with cursor and blinking cursor disabled
+   97:	  8080	F0		  MOVX @DPTR, A
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 3
+
+
+
+ Line  I  Addr  Code            Source
+
+   98:
+   99:	  8081	11 60		  ACALL busy_check
+  100:	  8083	90 FE 00	  MOV DPTR, #lcd_command_wr
+  101:	  8086	74 1C		  MOV A, #1Ch ; Right shift the display
+  102:	  8088	F0		  MOVX @DPTR, A
+  103:
+  104:				  ;ACALL busy_check
+  105:				  ;MOV DPTR, #lcd_command_wr
+  106:				  ;MOV A, #80h ; Set display buffer RAM address. This sets the cursor to the beginning of the first
+				line.
+  107:				  ;MOVX @DPTR, A
+  108:
+  109:				  ; May also have to set the entry mode here
+  110:
+  111:				  ;MOV A, R0 ; Return value to A
+  112:	  8089	22		RET
+  113:
+  114:				; Clear the display on the board
+  115:	  808A			clear_disp:
+  116:				  ;MOV R0, A ; Save value in A
+  117:	  808A	11 60		  ACALL busy_check ; Check if busy
+  118:	  808C	90 FE 00	  MOV DPTR, #lcd_command_wr
+  119:	  808F	74 01		  MOV A, #01h ; Clears the display
+  120:	  8091	F0		  MOVX @DPTR, A
+  121:				  ;MOV A, R0 ; Return value to A.
+  122:	  8092	22		RET
+  123:
+  124:	  8093			theend:
+  125:				END                         ; End of program.
+
+
+
+
+
+                     register banks used:  ---
+
+                     no errors
+
+
+
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 4
+
+
+
+
+
+	       L I S T   O F   S Y M B O L S
+	       =============================
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+??ASEM_51			  NUMBER    8051
+??VERSION			  NUMBER    0130
+AC				  BIT	      D6
+ACC				  DATA	      E0
+B				  DATA	      F0
+BUSY_CHECK			  CODE	    8060	  67
+CLEAR_DISP			  CODE	    808A	 115
+CONFIGURE_LCD			  CODE	    8071	  86
+CY				  BIT	      D7
+DPH				  DATA	      83
+DPL				  DATA	      82
+EA				  BIT	      AF
+ES				  BIT	      AC
+ET0				  BIT	      A9
+ET1				  BIT	      AB
+EX0				  BIT	      A8
+EX1				  BIT	      AA
+EXTI0				  CODE	    0003
+EXTI1				  CODE	    0013
+F0				  BIT	      D5
+IE				  DATA	      A8
+IE0				  BIT	      89
+IE1				  BIT	      8B
+INT0				  BIT	      B2
+INT1				  BIT	      B3
+IP				  DATA	      B8
+IT0				  BIT	      88
+IT1				  BIT	      8A
+LCD_COMMAND_WR			  NUMBER    FE00	  30
+LCD_DATA_RD			  NUMBER    FE03	  33
+LCD_DATA_WR			  NUMBER    FE02	  32
+LCD_STATUS_RD			  NUMBER    FE01	  31
+LCD_WAIT			  CODE	    8063	  70
+LOCAT				  NUMBER    8000	  13
+MAIN_PROGRAM			  CODE	    804E	  50
+MOVE_CURSOR_HOME		  CODE	    8068	  76
+OV				  BIT	      D2
+P				  BIT	      D0
+P0				  DATA	      80
+P1				  DATA	      90
+P2				  DATA	      A0
+P3				  DATA	      B0
+PCON				  DATA	      87
+PORT_A				  NUMBER    F800	  26
+PORT_ABC_PGM			  NUMBER    F803	  28
+PORT_B				  NUMBER    F801	  27
+PS				  BIT	      BC
+PSW				  DATA	      D0
+PT0				  BIT	      B9
+PT1				  BIT	      BB
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 5
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+PX0				  BIT	      B8
+PX1				  BIT	      BA
+RB8				  BIT	      9A
+RD				  BIT	      B7
+REN				  BIT	      9C
+RESET				  CODE	    0000
+RI				  BIT	      98
+RS0				  BIT	      D3
+RS1				  BIT	      D4
+RXD				  BIT	      B0
+SBUF				  DATA	      99
+SCON				  DATA	      98
+SINT				  CODE	    0023
+SM0				  BIT	      9F
+SM1				  BIT	      9E
+SM2				  BIT	      9D
+SP				  DATA	      81
+T0				  BIT	      B4
+T1				  BIT	      B5
+TB8				  BIT	      9B
+TCON				  DATA	      88
+TF0				  BIT	      8D
+TF1				  BIT	      8F
+TH0				  DATA	      8C
+TH1				  DATA	      8D
+THEEND				  CODE	    8093	 124
+TI				  BIT	      99
+TIMER0				  CODE	    000B
+TIMER1				  CODE	    001B
+TL0				  DATA	      8A
+TL1				  DATA	      8B
+TMOD				  DATA	      89
+TR0				  BIT	      8C
+TR1				  BIT	      8E
+TXD				  BIT	      B1
+WR				  BIT	      B6
